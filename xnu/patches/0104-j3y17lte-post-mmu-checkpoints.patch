@@ -1,0 +1,126 @@
+--- a/osfmk/arm64/start.s
++++ b/osfmk/arm64/start.s
+@@ -1054,11 +1054,61 @@
+ 	// Enable NEON
+ 	mov		x0, #(CPACR_FPEN_ENABLE)
+ 	msr		CPACR_EL1, x0
++
++#if defined(J3Y17LTE)
++	/* J3XNU004 stage 5: CPACR_EL1 write survived. */
++	MOV64	x10, 0x67057360
++	MOV64	x11, 0xffff8000
++	mov		x12, #16
++	mov		x15, #2880
++
++Lj3_stage5_row:
++	mov		x14, x10
++	mov		x13, #48
++
++Lj3_stage5_col:
++	str		w11, [x14], #4
++	subs		x13, x13, #1
++	b.ne	Lj3_stage5_col
++
++	dsb		sy
++
++	add		x10, x10, x15
++	subs		x12, x12, #1
++	b.ne	Lj3_stage5_row
++
++	dsb		sy
++#endif
+ #endif
+ 
+ 	// Clear thread pointer
+ 	msr		TPIDR_EL1, xzr						// Set thread register
+ 
++#if defined(J3Y17LTE)
++	/* J3XNU004 stage 6: TPIDR_EL1 write survived. */
++	MOV64	x10, 0x67065460
++	MOV64	x11, 0xffffffff
++	mov		x12, #16
++	mov		x15, #2880
++
++Lj3_stage6_row:
++	mov		x14, x10
++	mov		x13, #48
++
++Lj3_stage6_col:
++	str		w11, [x14], #4
++	subs		x13, x13, #1
++	b.ne	Lj3_stage6_col
++
++	dsb		sy
++
++	add		x10, x10, x15
++	subs		x12, x12, #1
++	b.ne	Lj3_stage6_row
++
++	dsb		sy
++#endif
++
+ 
+ #if defined(APPLE_ARM64_ARCH_FAMILY)
+ 	mrs		x12, MDSCR_EL1
+@@ -1067,11 +1117,61 @@
+ 	// Initialization common to all non-virtual Apple targets
+ #endif  // APPLE_ARM64_ARCH_FAMILY
+ 
++#if defined(J3Y17LTE)
++	/* J3XNU004 stage 7: post-MDSCR / Apple debug-register stage. */
++	MOV64	x10, 0x67073560
++	MOV64	x11, 0xff0000ff
++	mov		x12, #16
++	mov		x15, #2880
++
++Lj3_stage7_row:
++	mov		x14, x10
++	mov		x13, #48
++
++Lj3_stage7_col:
++	str		w11, [x14], #4
++	subs		x13, x13, #1
++	b.ne	Lj3_stage7_col
++
++	dsb		sy
++
++	add		x10, x10, x15
++	subs		x12, x12, #1
++	b.ne	Lj3_stage7_row
++
++	dsb		sy
++#endif
++
+ 	// Read MIDR before start of per-SoC tunables
+ 	mrs x12, MIDR_EL1
+ 
+ 	APPLY_TUNABLES x12, x13, x14
+ 
++#if defined(J3Y17LTE)
++	/* J3XNU004 stage 8: APPLY_TUNABLES survived. */
++	MOV64	x10, 0x67081660
++	MOV64	x11, 0xffff80ff
++	mov		x12, #16
++	mov		x15, #2880
++
++Lj3_stage8_row:
++	mov		x14, x10
++	mov		x13, #48
++
++Lj3_stage8_col:
++	str		w11, [x14], #4
++	subs		x13, x13, #1
++	b.ne	Lj3_stage8_col
++
++	dsb		sy
++
++	add		x10, x10, x15
++	subs		x12, x12, #1
++	b.ne	Lj3_stage8_row
++
++	dsb		sy
++#endif
++
+ 
+ #if HAS_CLUSTER
+ 	// Unmask external IRQs if we're restarting from non-retention WFI
