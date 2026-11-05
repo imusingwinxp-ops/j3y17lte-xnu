@@ -1,0 +1,188 @@
+--- a/osfmk/kern/startup.c
++++ b/osfmk/kern/startup.c
+@@ -441,9 +441,6 @@
+ 		case STARTUP_SUB_KTRACE:
+ 			sweet_early_mark(64, "startup KTRACE");
+ 			break;
+-		case STARTUP_SUB_OSLOG:
+-			sweet_early_mark(68, "startup OSLOG");
+-			break;
+ 		default:
+ 			break;
+ 		}
+--- a/libkern/os/log.c
++++ b/libkern/os/log.c
+@@ -102,6 +102,11 @@
+ static void
+ oslog_init(void)
+ {
++#if defined(J3Y17LTE)
++        extern void sweet_early_mark(unsigned int, const char *);
++        sweet_early_mark(68, "J3XNU015 ENTER oslog_init");
++#endif
++
+ 	/*
+ 	 * Disable kernel logging if ATM_TRACE_DISABLE set. ATM_TRACE_DISABLE
+ 	 * bit is not supposed to change during a system run but nothing really
+@@ -109,6 +114,10 @@
+ 	 * value in a dedicated variable for a later reference, just in case.
+ 	 */
+ 	oslog_disabled = atm_get_diagnostic_config() & ATM_TRACE_DISABLE;
++#if defined(J3Y17LTE)
++        sweet_early_mark(69, "J3XNU015 EXIT oslog_init");
++#endif
++
+ }
+ STARTUP(OSLOG, STARTUP_RANK_FIRST, oslog_init);
+ 
+@@ -116,8 +125,17 @@
+ static void
+ oslog_init_logmem(void)
+ {
++#if defined(J3Y17LTE)
++        extern void sweet_early_mark(unsigned int, const char *);
++        sweet_early_mark(76, "J3XNU015 ENTER oslog_init_logmem");
++#endif
++
+ 	if (os_log_disabled()) {
+ 		printf("Long logs support disabled: Logging disabled by ATM\n");
++
++#if defined(J3Y17LTE)
++        sweet_early_mark(77, "J3XNU015 EXIT oslog_init_logmem");
++#endif
+ 		return;
+ 	}
+ 
+@@ -133,6 +151,10 @@
+ 	} else {
+ 		printf("Long logs support disabled: Not enough memory\n");
+ 	}
++#if defined(J3Y17LTE)
++        sweet_early_mark(77, "J3XNU015 EXIT oslog_init_logmem");
++#endif
++
+ }
+ STARTUP(OSLOG, STARTUP_RANK_SECOND, oslog_init_logmem);
+ 
+--- a/libkern/os/log_queue.c
++++ b/libkern/os/log_queue.c
+@@ -641,13 +641,26 @@
+ static void
+ oslog_init_log_queues(void)
+ {
++#if defined(J3Y17LTE)
++        extern void sweet_early_mark(unsigned int, const char *);
++        sweet_early_mark(78, "J3XNU015 ENTER oslog_init_log_queues");
++#endif
++
+ 	if (os_log_disabled()) {
+ 		printf("Log queues disabled: Logging disabled by ATM\n");
++
++#if defined(J3Y17LTE)
++        sweet_early_mark(79, "J3XNU015 EXIT oslog_init_log_queues");
++#endif
+ 		return;
+ 	}
+ 
+ 	if (lq_bootarg_size_order == 0) {
+ 		printf("Log queues disabled: Zero lq_size_order boot argument\n");
++
++#if defined(J3Y17LTE)
++        sweet_early_mark(79, "J3XNU015 EXIT oslog_init_log_queues");
++#endif
+ 		return;
+ 	}
+ 
+@@ -674,6 +687,10 @@
+ 	printf("Log queues configured: slot count: %u, per-slot size: %u, total size: %u\n",
+ 	    slot_count, (1 << lq_bootarg_size_order),
+ 	    slot_count * (1 << lq_bootarg_size_order));
++#if defined(J3Y17LTE)
++        sweet_early_mark(79, "J3XNU015 EXIT oslog_init_log_queues");
++#endif
++
+ }
+ STARTUP(OSLOG, STARTUP_RANK_SECOND, oslog_init_log_queues);
+ 
+--- a/bsd/kern/subr_log_stream.c
++++ b/bsd/kern/subr_log_stream.c
+@@ -1033,8 +1033,17 @@
+ static void
+ oslog_stream_init(void)
+ {
++#if defined(J3Y17LTE)
++        extern void sweet_early_mark(unsigned int, const char *);
++        sweet_early_mark(70, "J3XNU015 ENTER oslog_stream_init");
++#endif
++
+ 	if (os_log_disabled()) {
+ 		printf("OSLog stream disabled: Logging disabled by ATM\n");
++
++#if defined(J3Y17LTE)
++        sweet_early_mark(71, "J3XNU015 EXIT oslog_stream_init");
++#endif
+ 		return;
+ 	}
+ 
+@@ -1054,5 +1063,9 @@
+ #ifdef LOG_STREAM_VERIFY
+ 	printf("OSLog stream verification: %d\n", log_stream_verify);
+ #endif /* LOG_STREAM_VERIFY */
++#if defined(J3Y17LTE)
++        sweet_early_mark(71, "J3XNU015 EXIT oslog_stream_init");
++#endif
++
+ }
+ STARTUP(OSLOG, STARTUP_RANK_SECOND, oslog_stream_init);
+--- a/bsd/kern/subr_log.c
++++ b/bsd/kern/subr_log.c
+@@ -520,8 +520,17 @@
+ static void
+ oslog_init_firehose(void)
+ {
++#if defined(J3Y17LTE)
++        extern void sweet_early_mark(unsigned int, const char *);
++        sweet_early_mark(72, "J3XNU015 ENTER oslog_init_firehose");
++#endif
++
+ 	if (os_log_disabled()) {
+ 		printf("Firehose disabled: Logging disabled by ATM\n");
++
++#if defined(J3Y17LTE)
++        sweet_early_mark(73, "J3XNU015 EXIT oslog_init_firehose");
++#endif
+ 		return;
+ 	}
+ 
+@@ -548,6 +557,10 @@
+ 
+ 	printf("Firehose configured: %u chunks, %u io pages\n",
+ 	    __firehose_buffer_kernel_chunk_count, __firehose_num_kernel_io_pages);
++#if defined(J3Y17LTE)
++        sweet_early_mark(73, "J3XNU015 EXIT oslog_init_firehose");
++#endif
++
+ }
+ STARTUP(OSLOG, STARTUP_RANK_SECOND, oslog_init_firehose);
+ 
+@@ -854,11 +867,20 @@
+ static void
+ oslog_init_msgbuf(void)
+ {
++#if defined(J3Y17LTE)
++        extern void sweet_early_mark(unsigned int, const char *);
++        sweet_early_mark(74, "J3XNU015 ENTER oslog_init_msgbuf");
++#endif
++
+ 	size_t msgbuf_size = 0;
+ 
+ 	if (PE_parse_boot_argn("msgbuf", &msgbuf_size, sizeof(msgbuf_size))) {
+ 		(void) log_setsize(msgbuf_size);
+ 	}
++#if defined(J3Y17LTE)
++        sweet_early_mark(75, "J3XNU015 EXIT oslog_init_msgbuf");
++#endif
++
+ }
+ STARTUP(OSLOG, STARTUP_RANK_SECOND, oslog_init_msgbuf);
+ 
