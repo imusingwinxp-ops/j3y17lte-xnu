@@ -1,0 +1,28 @@
+--- a/osfmk/arm/arm_init.c
++++ b/osfmk/arm/arm_init.c
+@@ -362,17 +362,15 @@
+ 	__asm__ volatile("dsb sy" ::: "memory");
+ 
+ 	/*
+-	 * Keep stage 10 visible for roughly five seconds.
+-	 * J3 architected timer frequency: 26 MHz.
++	 * J3XNU006:
++	 * Do not depend on the architected timer this early.
++	 * Use a bounded instruction loop instead.
+ 	 */
+-	unsigned long j3_start;
+-	unsigned long j3_now;
+-
+-	__asm__ volatile("mrs %0, cntpct_el0" : "=r"(j3_start));
+-
+-	do {
+-		__asm__ volatile("mrs %0, cntpct_el0" : "=r"(j3_now));
+-	} while ((j3_now - j3_start) < 130000000UL);
++	for (volatile unsigned long j3_delay = 0;
++	    j3_delay < 100000000UL;
++	    j3_delay++) {
++		__asm__ volatile("" ::: "memory");
++	}
+ 
+ 	/*
+ 	 * PSCI SYSTEM_OFF through the J3's SMC conduit.
