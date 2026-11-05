@@ -1,0 +1,33 @@
+--- a/osfmk/arm64/arm_vm_init.c
++++ b/osfmk/arm64/arm_vm_init.c
+@@ -2205,10 +2205,28 @@
+ 	arm_set_user_tbi();
+ 
+ #if defined(SWEET)
++#if defined(J3Y17LTE)
++	/*
++	 * J3XNU010:
++	 *
++	 * Unlike the donor SWEET VA layout, the J3 39-bit kernel layout does
++	 * not already contain an L1/L2 table covering SWEET_EARLY_FB_VA.
++	 *
++	 * Allocate the page-table hierarchy first, leaving the target L2
++	 * entry empty for sweet_early_map_final() to install its 2 MiB
++	 * framebuffer block mapping.
++	 */
++	init_ptpages(cpu_tte,
++	    SWEET_EARLY_FB_VA,
++	    SWEET_EARLY_FB_VA + ARM_TT_L2_SIZE,
++	    TRUE,
++	    ARM_DYNAMIC_TABLE_XN |
++	    ARM_TTE_TABLE_AP(ARM_TTE_TABLE_AP_USER_NA));
++
++#endif
++
+ 	/*
+ 	 * phystokv() must still refer to the bootstrap aperture here.
+-	 * J3 maps physical framebuffer 0x67000000 into a permanent
+-	 * kernel TTBR1 alias before TTBR0 is removed.
+ 	 */
+ 	sweet_early_map_final();
+ #endif
