@@ -1,18 +1,17 @@
 --- a/osfmk/arm64/start.s
 +++ b/osfmk/arm64/start.s
-@@ -1200,8 +1200,38 @@
+@@ -1200,8 +1200,37 @@
  	mov	lr, x21
  #endif
  
 -	// Return to arm_init()
 -	ret
-+
 +        // Return to arm_init()
 +
 +#if defined(J3Y17LTE)
 +        /*
 +         * J3XNU005 stage 9:
-+         * all post-MMU assembly completed; about to enter arm_init().
++         * completed early ARM64 assembly; about to enter arm_init().
 +         */
 +        MOV64   x10, 0x6708f760
 +        MOV64   x11, 0xff00ff80

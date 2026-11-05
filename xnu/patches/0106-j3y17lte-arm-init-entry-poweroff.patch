@@ -1,6 +1,6 @@
 --- a/osfmk/arm/arm_init.c
 +++ b/osfmk/arm/arm_init.c
-@@ -340,6 +340,66 @@
+@@ -340,6 +340,58 @@
  arm_init(
  	boot_args       *args)
  {
@@ -8,10 +8,7 @@
 +#if defined(J3Y17LTE)
 +	/*
 +	 * J3XNU005 stage 10:
-+	 * execution has entered C arm_init().
-+	 *
-+	 * The temporary 0x67000000 TTBR0 framebuffer aperture installed
-+	 * during early startup is still active here.
++	 * C execution has entered arm_init().
 +	 */
 +	volatile unsigned int *j3fb =
 +	    (volatile unsigned int *)0x6709d860UL;
@@ -29,9 +26,8 @@
 +	__asm__ volatile("dsb sy" ::: "memory");
 +
 +	/*
-+	 * Leave the marker visible briefly.
-+	 *
-+	 * J3 generic timer frequency from the recovered DT is 26 MHz.
++	 * Keep stage 10 visible for roughly five seconds.
++	 * J3 architected timer frequency: 26 MHz.
 +	 */
 +	unsigned long j3_start;
 +	unsigned long j3_now;
@@ -43,8 +39,7 @@
 +	} while ((j3_now - j3_start) < 130000000UL);
 +
 +	/*
-+	 * PSCI SYSTEM_OFF.
-+	 * J3 PSCI conduit is SMC.
++	 * PSCI SYSTEM_OFF through the J3's SMC conduit.
 +	 */
 +	register unsigned long j3_psci_x0 __asm__("x0") = 0x84000008UL;
 +
@@ -55,10 +50,7 @@
 +	    : "memory"
 +	);
 +
-+	/*
-+	 * SYSTEM_OFF should not return. If firmware rejects it,
-+	 * stop here instead of continuing an unintended diagnostic boot.
-+	 */
++	/* SYSTEM_OFF should never return. */
 +	for (;;) {
 +		__asm__ volatile("wfe");
 +	}
