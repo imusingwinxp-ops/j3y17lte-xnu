@@ -1,0 +1,244 @@
+--- a/pexpert/arm/pe_fiq.c
++++ b/pexpert/arm/pe_fiq.c
+@@ -223,8 +223,80 @@
+ #endif /* SWEET */
+ }
+ #else
++#if defined(J3Y17LTE)
++/* Exynos7570 GIC-400: distributor and CPU interface, both non-secure Group 1. */
++static vm_offset_t j3_gicd_base;
++static vm_offset_t j3_gicc_base;
++
++static uint32_t
++j3_gic_read32(vm_offset_t base, unsigned int offset)
++{
++	return *(volatile uint32_t *)(base + offset);
++}
++
++static void
++j3_gic_write32(vm_offset_t base, unsigned int offset, uint32_t value)
++{
++	*(volatile uint32_t *)(base + offset) = value;
++}
++
++uint32_t
++j3y17lte_irq_ack(void)
++{
++	return j3_gic_read32(j3_gicc_base, 0x00c);
++}
++
++void
++j3y17lte_irq_eoi(uint32_t iar)
++{
++	j3_gic_write32(j3_gicc_base, 0x010, iar);
++}
++
++void
++j3y17lte_send_self_ipi(void)
++{
++	__builtin_arm_dsb(DSB_ISHST);
++	j3_gic_write32(j3_gicd_base, 0xf00, (2U << 24) | 1U);
++}
++
++void
++pe_init_fiq(void)
++{
++	DTEntry entry;
++	const void *reg;
++	unsigned int size;
++	if (SecureDTLookupEntry(NULL, "/arm-io/gic", &entry) != kSuccess ||
++	    SecureDTGetProperty(entry, "reg", &reg, &size) != kSuccess ||
++	    size < 4 * sizeof(uint64_t)) {
++		panic("j3y17lte: missing GICv2 reg in ADT");
++	}
++	const uint64_t *r = reg;
++	vm_offset_t soc = pe_arm_get_soc_base_phys();
++	j3_gicd_base = ml_io_map(soc + r[0], r[1]);
++	j3_gicc_base = ml_io_map(soc + r[2], r[3]);
++	if (!j3_gicd_base || !j3_gicc_base) {
++		panic("j3y17lte: cannot map GICv2");
++	}
++	/* INTID 27 is the virtual timer PPI; SGI 1 is the local self signal. */
++	j3_gic_write32(j3_gicd_base, 0x080,
++	    j3_gic_read32(j3_gicd_base, 0x080) | (1U << 27) | (1U << 1));
++	for (unsigned int i = 0; i < 32; i += 4) {
++		j3_gic_write32(j3_gicd_base, 0x400 + i, 0xa0a0a0a0U);
++	}
++	j3_gic_write32(j3_gicd_base, 0x100, (1U << 27) | (1U << 1));
++	j3_gic_write32(j3_gicc_base, 0x004, 0xff); /* GICC_PMR */
++	j3_gic_write32(j3_gicc_base, 0x008, 0);    /* GICC_BPR */
++	j3_gic_write32(j3_gicc_base, 0x000,
++	    j3_gic_read32(j3_gicc_base, 0x000) | 1U);
++	j3_gic_write32(j3_gicd_base, 0x000,
++	    j3_gic_read32(j3_gicd_base, 0x000) | 1U);
++	__builtin_arm_dsb(DSB_SY);
++	__builtin_arm_isb(ISB_SY);
++}
++#else
+ void
+ pe_init_fiq()
+ {
+ }
++#endif /* J3Y17LTE */
+ #endif
+--- a/osfmk/arm64/sleh.c
++++ b/osfmk/arm64/sleh.c
+@@ -1856,28 +1856,38 @@
+ #endif
+ 
+ 
+-#if defined(SWEET)
++#if defined(J3Y17LTE) || defined(SWEET)
+ 	/*
+-	 * sweet: TrustZone owns GIC Group 0, so the timer and IPIs that other
+-	 * ARM64 targets take as FIQs arrive here as Group 1 IRQs.
++	 * The non-secure timer and IPIs arrive as Group 1 IRQs.
+ 	 */
+-	uint64_t iar = __builtin_arm_rsr64("ICC_IAR1_EL1");
++	uint64_t iar;
++#if defined(J3Y17LTE)
++	extern uint32_t j3y17lte_irq_ack(void);
++	extern void j3y17lte_irq_eoi(uint32_t);
++	iar = j3y17lte_irq_ack();
++	#define J3_IRQ_EOI(value) j3y17lte_irq_eoi((uint32_t)(value))
++	const uint32_t timer_intid = J3Y17LTE_VTIMER_INTID;
++#else
++	iar = __builtin_arm_rsr64("ICC_IAR1_EL1");
++	#define J3_IRQ_EOI(value) __builtin_arm_wsr64("ICC_EOIR1_EL1", (value))
++	const uint32_t timer_intid = sweet_vtimer_intid;
++#endif
+ 	uint32_t intid = (uint32_t)(iar & 0xFFFFFF);
+ 
+ 	if (intid >= 1020 && intid <= 1023) {
+ 		return; /* spurious */
+ 	}
+-	if (intid == sweet_vtimer_intid) {
++	if (intid == timer_intid) {
+ 		sleh_interrupt_handler_prologue(state, DBG_INTR_TYPE_TIMER);
+ 		cdp->cpu_decrementer = -1; /* Large */
+ 		INTERRUPT_MASKED_DEBUG_START(rtclock_intr, DBG_INTR_TYPE_TIMER);
+ 		rtclock_intr(TRUE);
+ 		INTERRUPT_MASKED_DEBUG_END();
+-		__builtin_arm_wsr64("ICC_EOIR1_EL1", iar);
++		J3_IRQ_EOI(iar);
+ 	} else if (intid < 16) {
+ 		sleh_interrupt_handler_prologue(state, DBG_INTR_TYPE_IPI);
+ 		/* Ack before handling so an IPI raised meanwhile is not lost */
+-		__builtin_arm_wsr64("ICC_EOIR1_EL1", iar);
++		J3_IRQ_EOI(iar);
+ 		__builtin_arm_isb(ISB_SY);
+ 		cpu_signal_handler();
+ 	} else {
+@@ -1888,8 +1898,9 @@
+ 			    cdp->interrupt_nub,
+ 			    intid);
+ 		}
+-		__builtin_arm_wsr64("ICC_EOIR1_EL1", iar);
+-	}
++		J3_IRQ_EOI(iar);
++	}
++	#undef J3_IRQ_EOI
+ 	__builtin_arm_isb(ISB_SY);
+ #else
+ 	sleh_interrupt_handler_prologue(state, DBG_INTR_TYPE_OTHER);
+--- a/iokit/Kernel/arm/SweetCPU.cpp
++++ b/iokit/Kernel/arm/SweetCPU.cpp
+@@ -20,6 +20,9 @@
+ 
+ extern "C" void sweet_secondary_entry(void);
+ extern "C" boolean_t sweet_cpu_signal_is_enabled(unsigned int cpu);
++#if defined(J3Y17LTE)
++extern "C" void j3y17lte_send_self_ipi(void);
++#endif
+ 
+ class SweetCPU;
+ static SweetCPU *sweet_cpus[MAX_CPUS];
+@@ -209,6 +212,12 @@
+ void
+ SweetCPU::signalCPU(IOCPU *target)
+ {
++#if defined(J3Y17LTE)
++	if (target != this) {
++		panic("j3y17lte: secondary CPU signalling is not enabled");
++	}
++	j3y17lte_send_self_ipi();
++#else
+ 	const ml_topology_info_t *topology = ml_get_topology_info();
+ 	unsigned int logical = target->getCPUNumber();
+ 	if (logical >= topology->num_cpus) {
+@@ -227,6 +236,7 @@
+ 	__builtin_arm_dsb(DSB_ISHST);
+ 	__builtin_arm_wsr64("ICC_SGI1R_EL1", sgi);
+ 	__builtin_arm_isb(ISB_SY);
++#endif
+ }
+ 
+ kern_return_t
+--- a/iokit/KernelConfigTables.cpp
++++ b/iokit/KernelConfigTables.cpp
+@@ -34,17 +34,25 @@
+ 
+ const char * gIOKernelConfigTables =
+     "("
+-#if defined(ARM64_BOARD_CONFIG_SWEET)
++#if defined(ARM64_BOARD_CONFIG_SWEET) || defined(ARM64_BOARD_CONFIG_J3Y17LTE)
+     "   {"
+     "     'IOClass'         = SweetPlatformExpert;"
+     "     'IOProviderClass' = IOPlatformExpertDevice;"
++#if defined(ARM64_BOARD_CONFIG_J3Y17LTE)
++    "     'IONameMatch'     = 'samsung,j3y17lte';"
++#else
+     "     'IONameMatch'     = 'xiaomi,sweet';"
++#endif
+     "     'IOProbeScore'    = 10000:32;"
+     "   },"
+     "   {"
+     "     'IOClass'         = SweetCPU;"
+     "     'IOProviderClass' = IOPlatformDevice;"
++#if defined(ARM64_BOARD_CONFIG_J3Y17LTE)
++    "     'IONameMatch'     = 'arm,cortex-a53';"
++#else
+     "     'IONameMatch'     = 'qcom,kryo470';"
++#endif
+     "     'IOProbeScore'    = 10000:32;"
+     "   },"
+     "   {"
+@@ -62,6 +70,7 @@
+     "     'IOProviderClass' = IOResources;"
+     "     'IOMatchCategory' = IOCoreSurfaceRoot;"
+     "   },"
++#if !defined(ARM64_BOARD_CONFIG_J3Y17LTE)
+     "   {"
+     "     'IOClass'         = AppleCLCD;"
+     "     'IOProviderClass' = IOPlatformDevice;"
+@@ -83,6 +92,7 @@
+     "     'IOMatchCategory' = SweetBattery;"
+     "   },"
+ #endif
++#endif
+     "   {"
+     "     'IOClass'         = IOPanicPlatform;"
+     "     'IOProviderClass' = IOPlatformExpertDevice;"
+--- a/iokit/Kernel/arm/SweetPlatformExpert.cpp
++++ b/iokit/Kernel/arm/SweetPlatformExpert.cpp
+@@ -25,12 +25,20 @@
+ bool
+ SweetPlatformExpert::start(IOService *provider)
+ {
++#if defined(J3Y17LTE)
++	IOLog("J3Y17LTE: starting device-tree platform expert\n");
++#else
+ 	IOLog("SWEET: starting device-tree platform expert\n");
++#endif
+ 	if (!IODTPlatformExpert::start(provider)) {
+ 		return false;
+ 	}
+ 	registerService();
++#if defined(J3Y17LTE)
++	IOLog("J3Y17LTE: platform expert registered\n");
++#else
+ 	IOLog("SWEET: platform expert registered\n");
++#endif
+ 	return true;
+ }
+ 

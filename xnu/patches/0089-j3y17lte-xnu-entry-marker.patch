@@ -1,0 +1,52 @@
+--- a/osfmk/arm64/start.s
++++ b/osfmk/arm64/start.s
+@@ -513,6 +513,49 @@
+ 	mov		x20, x0
+ 	mov		x21, #0
+ 
++
++#if defined(J3Y17LTE)
++	/*
++	 * First proof that execution reached XNU itself.
++	 * S-Boot framebuffer:
++	 *   physical base = 0x67000000
++	 *   stride        = 2880 bytes
++	 *
++	 * MMU is still off here.
++	 */
++	MOV64	x10, 0x67010e60
++	MOV64	x11, 0xff00ff00
++	mov	x12, #16
++	mov	x15, #2880
++
++Lj3_entry_row:
++	mov	x14, x10
++	mov	x13, #48
++
++Lj3_entry_pixel:
++	str	w11, [x14], #4
++	subs	x13, x13, #1
++	b.ne	Lj3_entry_pixel
++
++	/* Push the row to the physical framebuffer. */
++	bic	x17, x10, #63
++
++Lj3_entry_flush:
++	dc	cvac, x17
++	add	x17, x17, #64
++	cmp	x17, x14
++	b.lo	Lj3_entry_flush
++
++	dsb	sy
++
++	add	x10, x10, x15
++	subs	x12, x12, #1
++	b.ne	Lj3_entry_row
++
++	dsb	sy
++#endif
++
++
+ #if defined(SWEET) && !defined(J3Y17LTE)
+ 	/* Stage 0: white 64x32 band, no stack or page tables needed. */
+ 	MOV64	x0, (0x9c000000 + 2368 * 4320)
