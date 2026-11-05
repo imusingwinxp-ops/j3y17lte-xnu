@@ -1,0 +1,107 @@
+--- a/osfmk/arm/arm_init.c
++++ b/osfmk/arm/arm_init.c
+@@ -450,6 +450,7 @@
+ 	if (SecureDTLookupEntry(NULL, "/chosen", &chosen) != kSuccess) {
+ 		panic("%s: Unable to find 'chosen' DT node", __FUNCTION__);
+ 	}
++	sweet_early_mark(31, "chosen DT found");
+ 
+ 	// Not usable TUNABLE here because TUNABLEs are parsed at a later point.
+ 	if (SecureDTGetProperty(chosen, "xnu_platform_stall", (void const **)&platform_stall_ptr,
+@@ -628,7 +629,14 @@
+ 	kprintf("kprintf initialized\n");
+ 	sweet_early_mark(20, "kprintf startup complete");
+ 	if (serial_exists) {
++#if defined(J3Y17LTE)
++		/*
++		 * J3XNU011: retain framebuffer diagnostics until later
++		 * machine bring-up has been traced.
++		 */
++#else
+ 		sweet_early_disable();
++#endif
+ 	}
+ 
+ 	serialmode = 0;
+@@ -670,9 +678,11 @@
+ 		disableConsoleOutput = FALSE;     /* Allow printfs to happen */
+ 	}
+ 	PE_create_console();
++	sweet_early_mark(21, "PE_create_console done");
+ 
+ 	/* setup console output */
+ 	PE_init_printf(FALSE);
++	sweet_early_mark(22, "PE_init_printf done");
+ 
+ #if __arm64__
+ #if DEBUG
+@@ -681,8 +691,10 @@
+ #endif
+ 
+ 	cpu_machine_idle_init(TRUE);
++	sweet_early_mark(23, "cpu_machine_idle_init done");
+ 
+ 	PE_init_platform(TRUE, &BootCpuData);
++	sweet_early_mark(24, "late PE_init_platform done");
+ 
+ #if __arm64__
+ 	extern bool cpu_config_correct;
+@@ -698,21 +710,31 @@
+ 
+ #endif
+ 
++	sweet_early_mark(25, "CPU PIO/late register setup done");
++
+ 	cpu_timebase_init(TRUE);
++	sweet_early_mark(26, "cpu_timebase_init done");
+ 
+ #if KPERF
+ 	/* kptimer_curcpu_up() must be called after cpu_timebase_init */
+ 	kptimer_curcpu_up();
+ #endif /* KPERF */
+ 
++	sweet_early_mark(27, "KPERF setup passed");
++
+ 	PE_init_cpu();
++	sweet_early_mark(28, "PE_init_cpu done");
++
+ 	fiq_context_init(TRUE);
++	sweet_early_mark(29, "fiq_context_init done");
+ 
+ 
+ #if HIBERNATION
+ 	pal_hib_init();
+ #endif /* HIBERNATION */
+ 
++	sweet_early_mark(30, "hibernation init passed");
++
+ 	/*
+ 	 * gPhysBase/Size only represent kernel-managed memory. These globals represent
+ 	 * the actual DRAM base address and size as reported by iBoot through the
+@@ -728,13 +750,16 @@
+ 	if (SecureDTGetProperty(chosen, "dram-base", (void const **)&dram_base, &dt_entry_size) != kSuccess) {
+ 		panic("%s: Unable to find 'dram-base' entry in the 'chosen' DT node", __FUNCTION__);
+ 	}
++	sweet_early_mark(32, "dram-base found");
+ 
+ 	if (SecureDTGetProperty(chosen, "dram-size", (void const **)&dram_size, &dt_entry_size) != kSuccess) {
+ 		panic("%s: Unable to find 'dram-size' entry in the 'chosen' DT node", __FUNCTION__);
+ 	}
++	sweet_early_mark(33, "dram-size found");
+ 
+ 	gDramBase = *dram_base;
+ 	gDramSize = *dram_size;
++	sweet_early_mark(34, "DRAM globals installed");
+ 
+ 	/*
+ 	 * Initialize the stack protector for all future calls
+@@ -748,6 +773,9 @@
+ 	 * against string vulnerabilities
+ 	 */
+ 	__stack_chk_guard &= ~(0xFFULL << 8);
++	sweet_early_mark(35, "stack protector initialized");
++
++	sweet_early_mark(36, "entering machine_startup");
+ 	machine_startup(args);
+ }
+ 

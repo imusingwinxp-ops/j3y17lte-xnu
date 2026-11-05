@@ -1,0 +1,56 @@
+--- a/osfmk/arm64/sweet_early.c
++++ b/osfmk/arm64/sweet_early.c
+@@ -45,11 +45,29 @@
+ {
+ 	(void)label;
+ 
+-	if (early_disabled || stage > 20) {
++	if (early_disabled || stage > 40) {
+ 		return;
+ 	}
+ 
+-	unsigned int x0 = stage * J3_MARK_STEP;
++	unsigned int marker_stage;
++	unsigned int marker_y;
++
++	if (stage <= 20) {
++		marker_stage = stage;
++		marker_y = J3_MARK_Y;
++	} else {
++		/*
++		 * J3XNU011:
++		 * stages 21..40 use a second diagnostic row.
++		 *
++		 * Row 704 with height 12 remains inside the first 2 MiB
++		 * framebuffer aperture.
++		 */
++		marker_stage = stage - 21;
++		marker_y = 704u;
++	}
++
++	unsigned int x0 = marker_stage * J3_MARK_STEP;
+ 
+ 	/*
+ 	 * Give consecutive stages visibly different colours.
+@@ -61,8 +79,10 @@
+ 	    (((stage * 97u) & 0xffu) << 8) |
+ 	    ((stage * 193u) & 0xffu);
+ 
+-	for (unsigned int y = J3_MARK_Y;
+-	    y < J3_MARK_Y + J3_MARK_H;
++	unsigned int marker_h = (stage <= 20) ? J3_MARK_H : 12u;
++
++	for (unsigned int y = marker_y;
++	    y < marker_y + marker_h;
+ 	    y++) {
+ 
+ 		volatile uint32_t *row =
+@@ -88,7 +108,7 @@
+ 	 * Stage 20 doubles as an obvious panic indicator during
+ 	 * early bring-up.
+ 	 */
+-	sweet_early_mark(20, "panic");
++	sweet_early_mark(40, "panic");
+ }
+ 
+ void
