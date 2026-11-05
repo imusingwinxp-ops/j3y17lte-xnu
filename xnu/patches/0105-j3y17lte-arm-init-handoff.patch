@@ -1,0 +1,43 @@
+--- a/osfmk/arm64/start.s
++++ b/osfmk/arm64/start.s
+@@ -1200,8 +1200,38 @@
+ 	mov	lr, x21
+ #endif
+ 
+-	// Return to arm_init()
+-	ret
++
++        // Return to arm_init()
++
++#if defined(J3Y17LTE)
++        /*
++         * J3XNU005 stage 9:
++         * all post-MMU assembly completed; about to enter arm_init().
++         */
++        MOV64   x10, 0x6708f760
++        MOV64   x11, 0xff00ff80
++        mov     x12, #16
++        mov     x15, #2880
++
++Lj3_stage9_row:
++        mov     x14, x10
++        mov     x13, #48
++
++Lj3_stage9_col:
++        str     w11, [x14], #4
++        subs    x13, x13, #1
++        b.ne    Lj3_stage9_col
++
++        dsb     sy
++
++        add     x10, x10, x15
++        subs    x12, x12, #1
++        b.ne    Lj3_stage9_row
++
++        dsb     sy
++#endif
++
++        ret
+ 
+ Ltrampoline:
+ 	// Load VA of the trampoline
