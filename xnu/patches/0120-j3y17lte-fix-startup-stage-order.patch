@@ -1,0 +1,43 @@
+--- a/osfmk/kern/startup.c
++++ b/osfmk/kern/startup.c
+@@ -420,32 +420,29 @@
+ 		 * same marker.
+ 		 */
+ 		switch (cur->subsystem) {
+-		case STARTUP_SUB_KPRINTF:
+-			sweet_early_mark(47, "startup KPRINTF");
+-			break;
+ 		case STARTUP_SUB_PMAP_STEAL:
+-			sweet_early_mark(48, "startup PMAP_STEAL");
++			sweet_early_mark(61, "startup PMAP_STEAL");
+ 			break;
+ 		case STARTUP_SUB_KMEM:
+-			sweet_early_mark(49, "startup KMEM");
++			sweet_early_mark(62, "startup KMEM");
+ 			break;
+ 		case STARTUP_SUB_ZALLOC:
+-			sweet_early_mark(50, "startup ZALLOC");
++			sweet_early_mark(63, "startup ZALLOC");
+ 			break;
+ 		case STARTUP_SUB_PERCPU:
+-			sweet_early_mark(51, "startup PERCPU");
++			sweet_early_mark(65, "startup PERCPU");
+ 			break;
+ 		case STARTUP_SUB_EVENT:
+-			sweet_early_mark(52, "startup EVENT");
++			sweet_early_mark(66, "startup EVENT");
+ 			break;
+ 		case STARTUP_SUB_CODESIGNING:
+-			sweet_early_mark(53, "startup CODESIGNING");
++			sweet_early_mark(67, "startup CODESIGNING");
+ 			break;
+ 		case STARTUP_SUB_KTRACE:
+-			sweet_early_mark(54, "startup KTRACE");
++			sweet_early_mark(64, "startup KTRACE");
+ 			break;
+ 		case STARTUP_SUB_OSLOG:
+-			sweet_early_mark(55, "startup OSLOG");
++			sweet_early_mark(68, "startup OSLOG");
+ 			break;
+ 		default:
+ 			break;

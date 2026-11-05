@@ -1,0 +1,67 @@
+--- a/osfmk/arm64/sweet_early.c
++++ b/osfmk/arm64/sweet_early.c
+@@ -45,7 +45,7 @@
+ {
+ 	(void)label;
+ 
+-	if (early_disabled || stage > 60) {
++	if (early_disabled || stage > 80) {
+ 		return;
+ 	}
+ 
+@@ -54,20 +54,23 @@
+ 
+ 	if (stage <= 20) {
+ 		marker_stage = stage;
+-		marker_y = J3_MARK_Y;
++		marker_y = 680u;
+ 	} else if (stage <= 40) {
+ 		marker_stage = stage - 21;
+-		marker_y = 704u;
++		marker_y = 696u;
++	} else if (stage <= 60) {
++		marker_stage = stage - 41;
++		marker_y = 708u;
+ 	} else {
+ 		/*
+-		 * J3XNU013:
+-		 * stages 41..60 use the final small diagnostic row.
++		 * J3XNU014:
++		 * stages 61..80 get a fourth diagnostic row.
+ 		 *
+-		 * Rows 716..725 remain inside the first 2 MiB
+-		 * 0x67000000 bootstrap framebuffer aperture.
++		 * The final row occupies scanlines 720..727, still
++		 * inside the first 2 MiB framebuffer aperture.
+ 		 */
+-		marker_stage = stage - 41;
+-		marker_y = 716u;
++		marker_stage = stage - 61;
++		marker_y = 720u;
+ 	}
+ 
+ 	unsigned int x0 = marker_stage * J3_MARK_STEP;
+@@ -83,8 +86,9 @@
+ 	    ((stage * 193u) & 0xffu);
+ 
+ 	unsigned int marker_h =
+-	    (stage <= 20) ? J3_MARK_H :
+-	    (stage <= 40) ? 12u : 10u;
++	    (stage <= 20) ? 12u :
++	    (stage <= 40) ? 8u :
++	    (stage <= 60) ? 8u : 8u;
+ 
+ 	for (unsigned int y = marker_y;
+ 	    y < marker_y + marker_h;
+@@ -110,9 +114,9 @@
+ 	(void)args;
+ 
+ 	/*
+-	 * Stage 60 is reserved as the unambiguous panic indicator.
++	 * Stage 80 is reserved as the unambiguous panic indicator.
+ 	 */
+-	sweet_early_mark(60, "panic");
++	sweet_early_mark(80, "panic");
+ }
+ 
+ void
