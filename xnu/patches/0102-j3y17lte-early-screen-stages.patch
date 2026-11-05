@@ -1,0 +1,110 @@
+--- a/osfmk/arm64/start.s
++++ b/osfmk/arm64/start.s
+@@ -585,6 +585,35 @@
+ 	ldr		x22, [x20, BA_VIRT_BASE]			// Get the kernel virt base
+ 	ldr		x23, [x20, BA_PHYS_BASE]			// Get the kernel phys base
+ 	ldr		x24, [x20, BA_MEM_SIZE]				// Get the physical memory size
++
++#if defined(J3Y17LTE)
++	/* J3XNU002 stage 1: boot_args memory parameters read. */
++	MOV64	x10, 0x6701ef60
++	MOV64	x11, 0xffffff00
++	mov		x12, #16
++	mov		x15, #2880
++Lj3_stage1_row:
++	mov		x14, x10
++	mov		x13, #48
++Lj3_stage1_col:
++	str		w11, [x14], #4
++	subs		x13, x13, #1
++	b.ne	Lj3_stage1_col
++
++	and		x17, x10, #0xffffffffffffffc0
++Lj3_stage1_clean:
++	dc		cvac, x17
++	add		x17, x17, #64
++	cmp		x17, x14
++	b.lo	Lj3_stage1_clean
++	dsb		sy
++
++	add		x10, x10, x15
++	subs		x12, x12, #1
++	b.ne	Lj3_stage1_row
++	dsb		sy
++#endif
++
+ 	adrp	x25, EXT(bootstrap_pagetables)@page	// Get the start of the page tables
+ 	ldr		x26, [x20, BA_BOOT_FLAGS]			// Get the kernel boot flags
+ 
+@@ -768,6 +797,35 @@
+ 	mov lr, x19
+ #endif
+ 
++
++#if defined(J3Y17LTE)
++	/* J3XNU002 stage 2: bootstrap mappings constructed. */
++	MOV64	x10, 0x6702d060
++	MOV64	x11, 0xff00ffff
++	mov		x12, #16
++	mov		x15, #2880
++Lj3_stage2_row:
++	mov		x14, x10
++	mov		x13, #48
++Lj3_stage2_col:
++	str		w11, [x14], #4
++	subs		x13, x13, #1
++	b.ne	Lj3_stage2_col
++
++	and		x17, x10, #0xffffffffffffffc0
++Lj3_stage2_clean:
++	dc		cvac, x17
++	add		x17, x17, #64
++	cmp		x17, x14
++	b.lo	Lj3_stage2_clean
++	dsb		sy
++
++	add		x10, x10, x15
++	subs		x12, x12, #1
++	b.ne	Lj3_stage2_row
++	dsb		sy
++#endif
++
+ 	// Set the translation control register.
+ 	adrp	x0,     EXT(sysreg_restore)@page		// Load TCR value from the system register restore structure
+ 	add		x0, x0, EXT(sysreg_restore)@pageoff
+@@ -875,6 +933,35 @@
+ 	PAC_INIT_KEY_STATE tmp=x0, tmp2=x1
+ #endif /* HAS_APPLE_PAC */
+ 
++
++#if defined(J3Y17LTE)
++	/* J3XNU002 stage 3: translation state ready, immediately before MMU enable. */
++	MOV64	x10, 0x6703b160
++	MOV64	x11, 0xffff00ff
++	mov		x12, #16
++	mov		x15, #2880
++Lj3_stage3_row:
++	mov		x14, x10
++	mov		x13, #48
++Lj3_stage3_col:
++	str		w11, [x14], #4
++	subs		x13, x13, #1
++	b.ne	Lj3_stage3_col
++
++	and		x17, x10, #0xffffffffffffffc0
++Lj3_stage3_clean:
++	dc		cvac, x17
++	add		x17, x17, #64
++	cmp		x17, x14
++	b.lo	Lj3_stage3_clean
++	dsb		sy
++
++	add		x10, x10, x15
++	subs		x12, x12, #1
++	b.ne	Lj3_stage3_row
++	dsb		sy
++#endif
++
+ 	// Enable caches, MMU, ROP and JOP
+ 	MOV64   x0, SCTLR_EL1_DEFAULT
+ 	MSR_SCTLR_EL1_X0
