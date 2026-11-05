@@ -1,0 +1,40 @@
+--- a/osfmk/arm64/arm_vm_init.c
++++ b/osfmk/arm64/arm_vm_init.c
+@@ -1843,17 +1843,36 @@
+ sweet_early_map_final(void)
+ {
+ 	const vm_map_address_t va = SWEET_EARLY_FB_VA;
++
++	/* J3XNU009 stage 8: entered permanent-FB mapping helper. */
++	sweet_early_mark(8, "map_final entered");
++
+ 	assert(va + ARM_TT_L2_SIZE <= gVirtBase);
++
++	/* stage 9: reserved-VA bounds assertion survived. */
++	sweet_early_mark(9, "FB VA bounds OK");
+ 	tt_entry_t l1 = cpu_tte[(va & ARM_TT_L1_INDEX_MASK) >> ARM_TT_L1_SHIFT];
+-	assert((l1 & (ARM_TTE_VALID | ARM_TTE_TYPE_MASK)) == (ARM_TTE_VALID | ARM_TTE_TYPE_TABLE));
++
++	assert((l1 & (ARM_TTE_VALID | ARM_TTE_TYPE_MASK)) ==
++	    (ARM_TTE_VALID | ARM_TTE_TYPE_TABLE));
++
++	/* stage 10: final TTBR1 has an L1 table covering this VA. */
++	sweet_early_mark(10, "FB L1 table OK");
+ 	tt_entry_t *l2 = (tt_entry_t *)phystokv(l1 & ARM_TTE_TABLE_MASK);
+ 	tt_entry_t *slot = &l2[(va & ARM_TT_L2_INDEX_MASK) >> ARM_TT_L2_SHIFT];
++
+ 	assert(*slot == ARM_TTE_EMPTY);
++
++	/* stage 11: chosen L2 slot really is unused. */
++	sweet_early_mark(11, "FB L2 slot empty");
+ 	*slot = SWEET_EARLY_FB_PA | ARM_TTE_VALID | ARM_TTE_TYPE_BLOCK |
+ 	    ARM_TTE_BLOCK_SH(SH_OUTER_MEMORY) |
+ 	    ARM_TTE_BLOCK_ATTRINDX(CACHE_ATTRINDX_WRITECOMB) |
+ 	    ARM_TTE_BLOCK_AF | ARM_TTE_BLOCK_PNX | ARM_TTE_BLOCK_NX;
+ 	__asm__ volatile("dsb ishst" ::: "memory");
++
++	/* stage 12: permanent framebuffer block entry installed. */
++	sweet_early_mark(12, "FB alias installed");
+ }
+ #endif
+ 
