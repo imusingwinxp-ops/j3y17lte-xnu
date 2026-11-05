@@ -1,0 +1,152 @@
+--- a/osfmk/kern/startup.c
++++ b/osfmk/kern/startup.c
+@@ -116,6 +116,9 @@
+ #include <machine/pmap.h>
+ #include <machine/commpage.h>
+ #include <machine/machine_routines.h>
++#if __arm64__
++#include <arm64/sweet_early.h>
++#endif
+ #include <libkern/version.h>
+ #include <pexpert/device_tree.h>
+ #include <sys/codesign.h>
+@@ -422,16 +425,29 @@
+ void
+ kernel_bootstrap(void)
+ {
++#if defined(J3Y17LTE)
++	sweet_early_mark(41, "kernel_bootstrap entered");
++#endif
++
+ 	kern_return_t   result;
+ 	thread_t        thread;
+ 	char            namep[16];
+ 
+ 	printf("%s\n", version); /* log kernel version */
++#if defined(J3Y17LTE)
++	sweet_early_mark(42, "version printf returned");
++#endif
+ 
+ 	scale_setup();
++#if defined(J3Y17LTE)
++	sweet_early_mark(43, "scale_setup returned");
++#endif
+ 
+ 	kernel_bootstrap_log("vm_mem_bootstrap");
+ 	vm_mem_bootstrap();
++#if defined(J3Y17LTE)
++	sweet_early_mark(44, "vm_mem_bootstrap returned");
++#endif
+ 
+ 	machine_info.memory_size = (uint32_t)mem_size;
+ #if XNU_TARGET_OS_OSX
+@@ -441,13 +457,23 @@
+ #endif /* XNU_TARGET_OS_OSX */
+ 	machine_info.major_version = version_major;
+ 	machine_info.minor_version = version_minor;
++#if defined(J3Y17LTE)
++	sweet_early_mark(45, "machine_info initialized");
++#endif
+ 
+ #if CONFIG_ATM
+ 	/* Initialize the Activity Trace Resource Manager. */
+ 	kernel_bootstrap_log("atm_init");
+ 	atm_init();
+ #endif
++#if defined(J3Y17LTE)
++	sweet_early_mark(46, "ATM init passed");
++#endif
++
+ 	kernel_startup_initialize_upto(STARTUP_SUB_OSLOG);
++#if defined(J3Y17LTE)
++	sweet_early_mark(47, "STARTUP_SUB_OSLOG reached");
++#endif
+ 
+ #if CONFIG_UBSAN_MINIMAL
+ 	kernel_bootstrap_log("UBSan minimal runtime init");
+@@ -464,6 +490,10 @@
+ 	telemetry_init();
+ #endif
+ 
++#if defined(J3Y17LTE)
++	sweet_early_mark(48, "sanitizer telemetry init passed");
++#endif
++
+ 	if (PE_i_can_has_debugger(NULL)) {
+ 		if (PE_parse_boot_argn("-show_pointers", &namep, sizeof(namep))) {
+ 			doprnt_hide_pointers = FALSE;
+@@ -474,21 +504,40 @@
+ 		}
+ 	}
+ 
++#if defined(J3Y17LTE)
++	sweet_early_mark(49, "debugger boot args passed");
++#endif
++
+ 	kernel_bootstrap_log("console_init");
+ 	console_init();
++#if defined(J3Y17LTE)
++	sweet_early_mark(50, "console_init returned");
++#endif
+ 
+ 	kernel_bootstrap_log("stackshot_init");
+ 	stackshot_init();
++#if defined(J3Y17LTE)
++	sweet_early_mark(51, "stackshot_init returned");
++#endif
+ 
+ 	kernel_bootstrap_log("sched_init");
+ 	sched_init();
++#if defined(J3Y17LTE)
++	sweet_early_mark(52, "sched_init returned");
++#endif
+ 
+ #if CONFIG_MACF
+ 	kernel_bootstrap_log("mac_policy_init");
+ 	mac_policy_init();
+ #endif
++#if defined(J3Y17LTE)
++	sweet_early_mark(53, "MAC policy init passed");
++#endif
+ 
+ 	kernel_startup_initialize_upto(STARTUP_SUB_MACH_IPC);
++#if defined(J3Y17LTE)
++	sweet_early_mark(54, "STARTUP_SUB_MACH_IPC reached");
++#endif
+ 
+ 	/*
+ 	 * As soon as the virtual memory system is up, we record
+@@ -496,18 +545,33 @@
+ 	 */
+ 	kernel_bootstrap_log("PMAP_ACTIVATE_KERNEL");
+ 	PMAP_ACTIVATE_KERNEL(master_cpu);
++#if defined(J3Y17LTE)
++	sweet_early_mark(55, "PMAP_ACTIVATE_KERNEL done");
++#endif
+ 
+ 	kernel_bootstrap_log("mapping_free_prime");
+ 	mapping_free_prime();                                           /* Load up with temporary mapping blocks */
++#if defined(J3Y17LTE)
++	sweet_early_mark(56, "mapping_free_prime returned");
++#endif
+ 
+ 	kernel_bootstrap_log("machine_init");
+ 	machine_init();
++#if defined(J3Y17LTE)
++	sweet_early_mark(57, "machine_init returned");
++#endif
+ 
+ 	kernel_bootstrap_log("thread_machine_init_template");
+ 	thread_machine_init_template();
++#if defined(J3Y17LTE)
++	sweet_early_mark(58, "thread_machine_init_template returned");
++#endif
+ 
+ 	kernel_bootstrap_log("clock_init");
+ 	clock_init();
++#if defined(J3Y17LTE)
++	sweet_early_mark(59, "clock_init returned");
++#endif
+ 
+ 	/*
+ 	 *	Initialize the IPC, task, and thread subsystems.
