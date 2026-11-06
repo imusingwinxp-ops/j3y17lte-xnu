@@ -1,0 +1,75 @@
+--- a/osfmk/arm64/sweet_early.c
++++ b/osfmk/arm64/sweet_early.c
+@@ -45,6 +45,6 @@
+ {
+ 	(void)label;
+ 
+-	if (early_disabled || stage > 140) {
++	if (early_disabled || stage > 200) {
+ 		return;
+ 	}
+@@ -90,10 +90,22 @@
+-	} else {
++	} else if (stage <= 140) {
+ 		/*
+ 		 * J3XNU023: stages 121..140 use scanlines 644..651,
+ 		 * remaining inside the first 2 MiB framebuffer aperture.
+ 		 */
+ 		marker_stage = stage - 121;
+ 		marker_y = 644u;
++	} else if (stage <= 160) {
++		/* J3XNU024: per-callback entry markers for Mach IPC. */
++		marker_stage = stage - 141;
++		marker_y = 632u;
++	} else if (stage <= 180) {
++		/* J3XNU024: entry logging has returned. */
++		marker_stage = stage - 161;
++		marker_y = 620u;
++	} else {
++		/* J3XNU024: initializer function has returned. */
++		marker_stage = stage - 181;
++		marker_y = 608u;
+ 	}
+ 
+ 	unsigned int x0 = marker_stage * J3_MARK_STEP;
+--- a/osfmk/kern/startup.c
++++ b/osfmk/kern/startup.c
+@@ -398,4 +398,7 @@
+ {
+ 	struct startup_entry *cur = startup_entry_cur;
++#if defined(J3Y17LTE)
++	unsigned int j3_mach_ipc_callback_index = 0;
++#endif
+ 
+ 	assert(startup_phase < upto);
+@@ -406,3 +406,10 @@
+ 	while (cur < startup_entries_end && cur->subsystem <= upto) {
++#if defined(J3Y17LTE)
++		if (cur->subsystem == STARTUP_SUB_MACH_IPC &&
++		    j3_mach_ipc_callback_index < 20u) {
++			sweet_early_mark(141u + j3_mach_ipc_callback_index,
++			    "J3XNU024 Mach IPC callback entered");
++		}
++#endif
+ 		if ((startup_debug & STARTUP_DEBUG_VERBOSE) &&
+ 		    startup_phase >= STARTUP_SUB_KPRINTF) {
+@@ -460,3 +460,19 @@
+ 		kernel_startup_log(cur->subsystem);
++#if defined(J3Y17LTE)
++		if (cur->subsystem == STARTUP_SUB_MACH_IPC &&
++		    j3_mach_ipc_callback_index < 20u) {
++			sweet_early_mark(161u + j3_mach_ipc_callback_index,
++			    "J3XNU024 Mach IPC startup logging returned");
++		}
++#endif
+ 		cur->func(cur->arg);
++#if defined(J3Y17LTE)
++		if (cur->subsystem == STARTUP_SUB_MACH_IPC) {
++			if (j3_mach_ipc_callback_index < 20u) {
++				sweet_early_mark(181u + j3_mach_ipc_callback_index,
++				    "J3XNU024 Mach IPC initializer returned");
++			}
++			j3_mach_ipc_callback_index++;
++		}
++#endif
+ 		startup_entry_cur = ++cur;
