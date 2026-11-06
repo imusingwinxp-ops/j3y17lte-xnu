@@ -1,6 +1,6 @@
 --- a/osfmk/kern/startup.c
 +++ b/osfmk/kern/startup.c
-@@ -470,24 +470,49 @@
+@@ -470,24 +470,40 @@
  #if defined(J3Y17LTE)
  	sweet_early_mark(47, "STARTUP_SUB_OSLOG reached");
 +	sweet_early_mark(93, "J3XNU018 OSLOG returned");
@@ -41,7 +41,7 @@
  #endif
  
  	if (PE_i_can_has_debugger(NULL)) {
-@@ -499,12 +524,18 @@
+@@ -499,12 +515,17 @@
  		}
  	}
  
