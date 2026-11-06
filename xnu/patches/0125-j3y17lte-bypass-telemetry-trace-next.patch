@@ -101,7 +101,7 @@
  	sweet_early_mark(54, "STARTUP_SUB_MACH_IPC reached");
  #endif
  
-@@ -550,6 +565,7 @@
+@@ -550,5 +565,6 @@
  	kernel_bootstrap_log("PMAP_ACTIVATE_KERNEL");
  	PMAP_ACTIVATE_KERNEL(master_cpu);
  #if defined(J3Y17LTE)
