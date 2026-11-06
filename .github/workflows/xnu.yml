@@ -144,7 +144,6 @@ jobs:
           # compiler, flags, generated sources and validation unchanged while
           # reusing identical compile results across clean GitHub runners.
           CCACHE: ccache
-          CCACHE_DIR: ${{ github.workspace }}/../.ccache
           # keep going after errors so one run reports every compile failure
           MAKEFLAGS: ${{ inputs.keep_going == 'false' && '' || '-k' }}
         run: bash build.sh
