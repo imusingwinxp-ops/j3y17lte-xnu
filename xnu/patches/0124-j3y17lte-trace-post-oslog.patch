@@ -1,0 +1,61 @@
+--- a/osfmk/kern/startup.c
++++ b/osfmk/kern/startup.c
+@@ -470,24 +470,49 @@
+ #if defined(J3Y17LTE)
+ 	sweet_early_mark(47, "STARTUP_SUB_OSLOG reached");
++	sweet_early_mark(93, "J3XNU018 OSLOG returned");
+ #endif
+ 
++#if defined(J3Y17LTE)
++	sweet_early_mark(94, "J3XNU018 before UBSAN phase");
++#endif
+ #if CONFIG_UBSAN_MINIMAL
+ 	kernel_bootstrap_log("UBSan minimal runtime init");
+ 	ubsan_minimal_init();
+ #endif
++#if defined(J3Y17LTE)
++	sweet_early_mark(95, "J3XNU018 UBSAN phase passed");
++#endif
+ 
+ #if KASAN
+ 	kernel_bootstrap_log("kasan_late_init");
+ 	kasan_late_init();
+ #endif
++#if defined(J3Y17LTE)
++	sweet_early_mark(96, "J3XNU018 KASAN phase passed");
++#endif
+ 
++#if defined(J3Y17LTE)
++	sweet_early_mark(97, "J3XNU018 before telemetry phase");
++#endif
+ #if CONFIG_TELEMETRY
+ 	kernel_bootstrap_log("telemetry_init");
+ 	telemetry_init();
+ #endif
++#if defined(J3Y17LTE)
++	sweet_early_mark(98, "J3XNU018 telemetry phase passed");
++#endif
+ 
+ #if defined(J3Y17LTE)
+ 	sweet_early_mark(48, "sanitizer telemetry init passed");
+ #endif
+ 
+ 	if (PE_i_can_has_debugger(NULL)) {
+@@ -499,12 +524,18 @@
+ 		}
+ 	}
+ 
++#if defined(J3Y17LTE)
++	sweet_early_mark(99, "J3XNU018 debugger args passed");
++#endif
++
+ #if defined(J3Y17LTE)
+ 	sweet_early_mark(49, "debugger boot args passed");
+ #endif
+ 
+ 	kernel_bootstrap_log("console_init");
+ 	console_init();
+ #if defined(J3Y17LTE)
++	sweet_early_mark(100, "J3XNU018 console_init returned");
+ 	sweet_early_mark(50, "console_init returned");
+ #endif
