@@ -56,7 +56,7 @@ jobs:
 
       - name: Deps
         run: |
-          brew install jq gum bash cmake ninja
+          brew install jq gum bash cmake ninja ccache
           # build.sh only checks that xcodes exists (Xcode is preinstalled); no bottle on macOS 14
           printf '#!/bin/sh\nexit 0\n' | sudo tee /usr/local/bin/xcodes >/dev/null
           sudo chmod +x /usr/local/bin/xcodes
@@ -119,12 +119,39 @@ jobs:
             pexpert/pexpert/arm64/J3Y17LTE.h \
             pexpert/pexpert/arm64/board_config.h
 
+      - name: Restore compiler cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.ccache
+          key: xnu-ccache-macos15-intel-xcode16-${{ env.MACOS_VERSION }}-${{ env.KERNEL_CONFIG }}-${{ env.MACHINE_CONFIG }}-${{ github.sha }}
+          restore-keys: |
+            xnu-ccache-macos15-intel-xcode16-${{ env.MACOS_VERSION }}-${{ env.KERNEL_CONFIG }}-${{ env.MACHINE_CONFIG }}-
+
+      - name: Configure compiler cache
+        run: |
+          mkdir -p ~/.ccache
+          ccache --set-config=cache_dir=${HOME}/.ccache
+          ccache --set-config=max_size=2G
+          ccache --set-config=compression=true
+          ccache --set-config=compiler_check=content
+          ccache --zero-stats
+          ccache --show-config
+
       - name: Build
         working-directory: dxb
         env:
+          # XNU 8796 natively supports make CCACHE=ccache; this leaves the
+          # compiler, flags, generated sources and validation unchanged while
+          # reusing identical compile results across clean GitHub runners.
+          CCACHE: ccache
+          CCACHE_DIR: ${{ github.workspace }}/../.ccache
           # keep going after errors so one run reports every compile failure
           MAKEFLAGS: ${{ inputs.keep_going == 'false' && '' || '-k' }}
         run: bash build.sh
+
+      - name: Compiler cache stats
+        if: always()
+        run: ccache --show-stats
 
       - name: Package build tree for local compiles
         if: always()
