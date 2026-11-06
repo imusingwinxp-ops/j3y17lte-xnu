@@ -1,14 +1,13 @@
 --- a/bsd/kern/subr_log.c
 +++ b/bsd/kern/subr_log.c
-@@ -557,12 +557,20 @@
- #if defined(J3Y17LTE)
+@@ -594,10 +594,17 @@
          sweet_early_mark(91, "J3XNU016 firehose create returned");
  #endif
  
 +#if defined(J3Y17LTE)
 +        /*
-+         * J3XNU016 reaches stage 91 but never stage 92.  The only operation
-+         * between those markers is this informational printf.  During J3
++         * J3XNU016 reaches stage 91 but never stage 92. The only operation
++         * between those markers is this informational printf. During J3
 +         * bring-up, avoid re-entering the logging/console path immediately
 +         * after the firehose buffer has been created.
 +         */
@@ -19,7 +18,5 @@
 -#if defined(J3Y17LTE)
 -        sweet_early_mark(92, "J3XNU016 final printf returned");
  #endif
-+
+ 
  #if defined(J3Y17LTE)
-         sweet_early_mark(73, "J3XNU015 EXIT oslog_init_firehose");
- #endif
