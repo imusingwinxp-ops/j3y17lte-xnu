@@ -119,6 +119,12 @@ jobs:
             pexpert/pexpert/arm64/J3Y17LTE.h \
             pexpert/pexpert/arm64/board_config.h
 
+          echo "===== J3 BRING-UP ASSERTIONS ====="
+          grep -n 'sweet_early_mark(101, "J3XNU019 telemetry bypass")' osfmk/kern/startup.c
+          grep -n 'sweet_early_mark(110, "J3XNU019 PMAP activate done")' osfmk/kern/startup.c
+          grep -n 'J3 bring-up: once ktrace finishes' osfmk/kern/startup.c
+          grep -n 'stage > 120' osfmk/arm64/sweet_early.c
+
       - name: Restore compiler cache
         uses: actions/cache@v4
         with:
