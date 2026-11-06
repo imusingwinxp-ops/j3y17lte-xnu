@@ -112,10 +112,12 @@ jobs:
             file out/kernel.development.j3y17lte | grep -Eq 'Mach-O 64-bit.*arm64'
             (
               cd out
-              shasum -a 256 kernel.* > SHA256SUMS
+              shasum -a 256 kernel.development.j3y17lte > SHA256SUMS
+              shasum -a 256 -c SHA256SUMS
               cat SHA256SUMS
             )
-            tar -czf j3y17lte-xnu-kernel.tgz -C out .
+            tar -czf j3y17lte-xnu-kernel.tgz -C out kernel.development.j3y17lte SHA256SUMS
+            tar -tzf j3y17lte-xnu-kernel.tgz
             shasum -a 256 j3y17lte-xnu-kernel.tgz
 
       # Retain the raw kernel even if a later packaging step fails.
