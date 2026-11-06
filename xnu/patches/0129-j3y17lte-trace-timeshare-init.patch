@@ -1,0 +1,87 @@
+--- a/osfmk/arm64/sweet_early.c
++++ b/osfmk/arm64/sweet_early.c
+@@ -45,6 +45,6 @@
+ {
+ 	(void)label;
+ 
+-	if (early_disabled || stage > 120) {
++	if (early_disabled || stage > 140) {
+ 		return;
+ 	}
+@@ -79,11 +79,18 @@
+ 		marker_stage = stage - 81;
+ 		marker_y = 668u;
+-	} else {
++	} else if (stage <= 120) {
+ 		/*
+ 		 * J3XNU019:
+ 		 * stages 101..120 use a sixth diagnostic row. Scanlines
+ 		 * 656..663 remain inside the bootstrap framebuffer aperture.
+ 		 */
+ 		marker_stage = stage - 101;
+ 		marker_y = 656u;
++	} else {
++		/*
++		 * J3XNU023: stages 121..140 use scanlines 644..651,
++		 * remaining inside the first 2 MiB framebuffer aperture.
++		 */
++		marker_stage = stage - 121;
++		marker_y = 644u;
+ 	}
+--- a/osfmk/kern/sched_prim.c
++++ b/osfmk/kern/sched_prim.c
+@@ -496,25 +496,54 @@
+ void
+ sched_timeshare_init(void)
+ {
++#if defined(J3Y17LTE)
++	extern void sweet_early_mark(unsigned int, const char *);
++	sweet_early_mark(121, "J3XNU023 timeshare init entered");
++#endif
+ 	/*
+ 	 * Calculate the timeslicing quantum
+ 	 * in us.
+ 	 */
+ 	if (default_preemption_rate < 1) {
+ 		default_preemption_rate = DEFAULT_PREEMPTION_RATE;
+ 	}
+ 	std_quantum_us = (1000 * 1000) / default_preemption_rate;
++#if defined(J3Y17LTE)
++	sweet_early_mark(122, "J3XNU023 foreground quantum ready");
++#endif
+ 
++#if !defined(J3Y17LTE)
+ 	printf("standard timeslicing quantum is %d us\n", std_quantum_us);
++#endif
++#if defined(J3Y17LTE)
++	sweet_early_mark(123, "J3XNU023 foreground printf bypassed");
++#endif
+ 
+ 	if (default_bg_preemption_rate < 1) {
+ 		default_bg_preemption_rate = DEFAULT_BG_PREEMPTION_RATE;
+ 	}
+ 	bg_quantum_us = (1000 * 1000) / default_bg_preemption_rate;
++#if defined(J3Y17LTE)
++	sweet_early_mark(124, "J3XNU023 background quantum ready");
++#endif
+ 
++#if !defined(J3Y17LTE)
+ 	printf("standard background quantum is %d us\n", bg_quantum_us);
++#endif
++#if defined(J3Y17LTE)
++	sweet_early_mark(125, "J3XNU023 background printf bypassed");
++#endif
+ 
+ 	load_shift_init();
++#if defined(J3Y17LTE)
++	sweet_early_mark(126, "J3XNU023 load shift initialized");
++#endif
+ 	preempt_pri_init();
++#if defined(J3Y17LTE)
++	sweet_early_mark(127, "J3XNU023 preempt priorities initialized");
++#endif
+ 	sched_tick = 0;
++#if defined(J3Y17LTE)
++	sweet_early_mark(128, "J3XNU023 timeshare init completed");
++#endif
+ }
