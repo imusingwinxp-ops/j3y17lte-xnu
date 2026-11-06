@@ -87,9 +87,14 @@ jobs:
             grep -n 'sweet_early_mark(101, "J3XNU019 telemetry bypass")' osfmk/kern/startup.c
             grep -n 'sweet_early_mark(110, "J3XNU019 PMAP activate done")' osfmk/kern/startup.c
             grep -n 'J3 bring-up: once ktrace finishes' osfmk/kern/startup.c
-            grep -n 'stage > 120' osfmk/arm64/sweet_early.c
+            # Do not pin the maximum stage number here: it grows during bring-up.
+            # Validate the actual new row and latest scheduler checkpoints.
+            grep -n 'if (early_disabled || stage >' osfmk/arm64/sweet_early.c
+            grep -nF 'marker_stage = stage - 121;' osfmk/arm64/sweet_early.c
             grep -n 'sweet_early_mark(111, "J3XNU021 entered sched_init")' osfmk/kern/sched_prim.c
             grep -n 'sweet_early_mark(120, "J3XNU021 deadline tracking initialized")' osfmk/kern/sched_prim.c
+            grep -n 'sweet_early_mark(121, "J3XNU023 timeshare init entered")' osfmk/kern/sched_prim.c
+            grep -n 'sweet_early_mark(128, "J3XNU023 timeshare init completed")' osfmk/kern/sched_prim.c
 
       - run:
           name: Compile J3 XNU kernel
