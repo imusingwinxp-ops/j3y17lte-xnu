@@ -1,0 +1,36 @@
+--- a/osfmk/kern/startup.c
++++ b/osfmk/kern/startup.c
+@@ -226,15 +226,25 @@
+ static inline void
+ kernel_bootstrap_log(const char *message)
+ {
++#if defined(J3Y17LTE)
++	/*
++	 * J3 bring-up: once ktrace finishes, kernel_debug_string_early()
++	 * can transition into the normal kdebug path. That path is not yet
++	 * safe on this non-Apple platform, so keep bootstrap logging inert.
++	 * Framebuffer stage markers remain our bring-up trace.
++	 */
++	(void)message;
++#else
+ 	if ((startup_debug & STARTUP_DEBUG_VERBOSE) &&
+ 	    startup_phase >= STARTUP_SUB_KPRINTF) {
+ 		kprintf("kernel_bootstrap: %s\n", message);
+ 	}
+ 	kernel_debug_string_early(message);
++#endif
+ }
+ 
+ static inline void
+ kernel_bootstrap_thread_log(const char *message)
+ {
++#if defined(J3Y17LTE)
++	(void)message;
++#else
+ 	if ((startup_debug & STARTUP_DEBUG_VERBOSE) &&
+ 	    startup_phase >= STARTUP_SUB_KPRINTF) {
+ 		kprintf("kernel_bootstrap_thread: %s\n", message);
+ 	}
+ 	kernel_debug_string_early(message);
++#endif
+ }
