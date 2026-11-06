@@ -73,7 +73,10 @@ jobs:
               git apply --check "$patch"
               git apply "$patch"
             done
-            # Git may launch a pager on this macOS image; never wait for input.\n            GIT_PAGER=cat git --no-pager diff --check >/dev/null 2>&1 || \\\n              echo "WARNING: donor-derived whitespace issues (non-blocking)"
+            # Never invoke a pager or wait for input in CI.
+            if ! GIT_PAGER=cat git --no-pager diff --check >/dev/null 2>&1; then
+              echo "WARNING: donor-derived whitespace issues (non-blocking)"
+            fi
 
             echo "===== BOARD AND BOOT MARKERS ====="
             grep -n 'MACHINE_FLAGS_ARM64_J3Y17LTE' makedefs/MakeInc.def
