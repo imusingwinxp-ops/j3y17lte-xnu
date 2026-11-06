@@ -1,0 +1,78 @@
+--- a/osfmk/kern/sched_prim.c
++++ b/osfmk/kern/sched_prim.c
+@@ -436,44 +436,75 @@
+ void
+ sched_init(void)
+ {
+ 	boolean_t direct_handoff = FALSE;
++#if defined(J3Y17LTE)
++	extern void sweet_early_mark(unsigned int, const char *);
++	sweet_early_mark(111, "J3XNU021 entered sched_init");
++#endif
+ 	kprintf("Scheduler: Default of %s\n", SCHED(sched_name));
++#if defined(J3Y17LTE)
++	sweet_early_mark(112, "J3XNU021 first scheduler kprintf returned");
++#endif
+ 
+ 	if (!PE_parse_boot_argn("sched_pri_decay_limit", &sched_pri_decay_band_limit, sizeof(sched_pri_decay_band_limit))) {
+ 		/* No boot-args, check in device tree */
+ 		if (!PE_get_default("kern.sched_pri_decay_limit",
+ 		    &sched_pri_decay_band_limit,
+ 		    sizeof(sched_pri_decay_band_limit))) {
+ 			/* Allow decay all the way to normal limits */
+ 			sched_pri_decay_band_limit = DEFAULT_DECAY_BAND_LIMIT;
+ 		}
+ 	}
++#if defined(J3Y17LTE)
++	sweet_early_mark(113, "J3XNU021 decay defaults ready");
++#endif
+ 
+ 	kprintf("Setting scheduler priority decay band limit %d\n", sched_pri_decay_band_limit);
++#if defined(J3Y17LTE)
++	sweet_early_mark(114, "J3XNU021 priority decay kprintf returned");
++#endif
+ 
+ 	if (PE_parse_boot_argn("sched_debug", &sched_debug_flags, sizeof(sched_debug_flags))) {
+ 		kprintf("Scheduler: Debug flags 0x%08x\n", sched_debug_flags);
+ 	}
++#if defined(J3Y17LTE)
++	sweet_early_mark(115, "J3XNU021 debug args checked");
++#endif
+ 	strlcpy(sched_string, SCHED(sched_name), sizeof(sched_string));
++#if defined(J3Y17LTE)
++	sweet_early_mark(116, "J3XNU021 sched_string copied");
++#endif
+ 
+ 	cpu_quiescent_counter_init();
++#if defined(J3Y17LTE)
++	sweet_early_mark(117, "J3XNU021 quiescent counter initialized");
++#endif
+ 
+ 	SCHED(init)();
++#if defined(J3Y17LTE)
++	sweet_early_mark(118, "J3XNU021 SCHED init returned");
++#endif
+ 	SCHED(rt_init)(&pset0);
++#if defined(J3Y17LTE)
++	sweet_early_mark(119, "J3XNU021 SCHED rt_init returned");
++#endif
+ 	sched_timer_deadline_tracking_init();
++#if defined(J3Y17LTE)
++	sweet_early_mark(120, "J3XNU021 deadline tracking initialized");
++#endif
+ 
+ 	SCHED(pset_init)(&pset0);
+ 	SCHED(processor_init)(master_processor);
+ 
+ 	if (PE_parse_boot_argn("direct_handoff", &direct_handoff, sizeof(direct_handoff))) {
+ 		allow_direct_handoff = direct_handoff;
+ 	}
+ 
+ #if DEVELOPMENT || DEBUG
+ 	if (PE_parse_boot_argn("enable_skstsct", &enable_task_set_cluster_type, sizeof(enable_task_set_cluster_type))) {
+ 		system_ecore_only = (enable_task_set_cluster_type == 2);
+ 	}
+ #endif /* DEVELOPMENT || DEBUG */
+ 
+ 	simple_lock_init(&sched_available_cores_lock, 0);
+ }
