@@ -1,0 +1,117 @@
+--- a/osfmk/arm64/sweet_early.c
++++ b/osfmk/arm64/sweet_early.c
+@@ -45,7 +45,7 @@
+ {
+ 	(void)label;
+ 
+-	if (early_disabled || stage > 80) {
++	if (early_disabled || stage > 100) {
+ 		return;
+ 	}
+ 
+@@ -61,7 +61,7 @@
+ 	} else if (stage <= 60) {
+ 		marker_stage = stage - 41;
+ 		marker_y = 708u;
+-	} else {
++	} else if (stage <= 80) {
+ 		/*
+ 		 * J3XNU014:
+ 		 * stages 61..80 get a fourth diagnostic row.
+@@ -72,6 +72,15 @@
+ 		 */
+ 		marker_stage = stage - 61;
+ 		marker_y = 720u;
++	} else {
++		/*
++		 * J3XNU016:
++		 * stages 81..100 use a fifth diagnostic row above the
++		 * original four rows.  Scanlines 668..675 are also inside
++		 * the first 2 MiB bootstrap framebuffer aperture.
++		 */
++		marker_stage = stage - 81;
++		marker_y = 668u;
+ 	}
+ 
+ 	unsigned int x0 = marker_stage * J3_MARK_STEP;
+--- a/bsd/kern/subr_log.c
++++ b/bsd/kern/subr_log.c
+@@ -523,6 +523,7 @@
+ #if defined(J3Y17LTE)
+         extern void sweet_early_mark(unsigned int, const char *);
+         sweet_early_mark(72, "J3XNU015 ENTER oslog_init_firehose");
++        sweet_early_mark(81, "J3XNU016 firehose enter");
+ #endif
+ 
+ 	if (os_log_disabled()) {
+@@ -535,29 +536,73 @@
+ 		return;
+ 	}
+ 
++#if defined(J3Y17LTE)
++        sweet_early_mark(82, "J3XNU016 logging enabled");
++#endif
++
+ 	if (!PE_parse_boot_argn("firehose_chunk_count", &__firehose_buffer_kernel_chunk_count, sizeof(__firehose_buffer_kernel_chunk_count))) {
+ 		__firehose_buffer_kernel_chunk_count = FIREHOSE_BUFFER_KERNEL_DEFAULT_CHUNK_COUNT;
+ 	}
++#if defined(J3Y17LTE)
++        sweet_early_mark(83, "J3XNU016 chunk count ready");
++#endif
++
+ 	if (!PE_parse_boot_argn("firehose_io_pages", &__firehose_num_kernel_io_pages, sizeof(__firehose_num_kernel_io_pages))) {
+ 		__firehose_num_kernel_io_pages = FIREHOSE_BUFFER_KERNEL_DEFAULT_IO_PAGES;
+ 	}
++#if defined(J3Y17LTE)
++        sweet_early_mark(84, "J3XNU016 io pages ready");
++#endif
++
+ 	if (!__firehose_kernel_configuration_valid(__firehose_buffer_kernel_chunk_count, __firehose_num_kernel_io_pages)) {
+ 		printf("illegal firehose configuration %u/%u, using defaults\n", __firehose_buffer_kernel_chunk_count, __firehose_num_kernel_io_pages);
+ 		__firehose_buffer_kernel_chunk_count = FIREHOSE_BUFFER_KERNEL_DEFAULT_CHUNK_COUNT;
+ 		__firehose_num_kernel_io_pages = FIREHOSE_BUFFER_KERNEL_DEFAULT_IO_PAGES;
+ 	}
++#if defined(J3Y17LTE)
++        sweet_early_mark(85, "J3XNU016 configuration ready");
++#endif
++
+ 	vm_size_t size = __firehose_buffer_kernel_chunk_count * FIREHOSE_CHUNK_SIZE;
+ 
++#if defined(J3Y17LTE)
++        sweet_early_mark(86, "J3XNU016 size calculated");
++        sweet_early_mark(87, "J3XNU016 before kmem_alloc");
++#endif
++
+ 	kmem_alloc(kernel_map, &kernel_firehose_addr, size + ptoa(2),
+ 	    KMA_NOFAIL | KMA_PERMANENT | KMA_GUARD_FIRST | KMA_GUARD_LAST |
+ 	    KMA_DATA | KMA_ZERO, VM_KERN_MEMORY_LOG);
+ 
++#if defined(J3Y17LTE)
++        sweet_early_mark(88, "J3XNU016 kmem_alloc returned");
++#endif
++
+ 	kernel_firehose_addr += PAGE_SIZE;
++#if defined(J3Y17LTE)
++        sweet_early_mark(89, "J3XNU016 guard page skipped");
++#endif
++
+ 	/* register buffer with firehose */
++#if defined(J3Y17LTE)
++        sweet_early_mark(90, "J3XNU016 before firehose create");
++#endif
++
+ 	kernel_firehose_addr = (vm_offset_t)__firehose_buffer_create((size_t *) &size);
+ 
++#if defined(J3Y17LTE)
++        sweet_early_mark(91, "J3XNU016 firehose create returned");
++#endif
++
+ 	printf("Firehose configured: %u chunks, %u io pages\n",
+ 	    __firehose_buffer_kernel_chunk_count, __firehose_num_kernel_io_pages);
++#if defined(J3Y17LTE)
++        sweet_early_mark(92, "J3XNU016 final printf returned");
++#endif
++
+ #if defined(J3Y17LTE)
+         sweet_early_mark(73, "J3XNU015 EXIT oslog_init_firehose");
+ #endif
