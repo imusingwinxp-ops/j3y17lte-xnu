@@ -155,6 +155,13 @@ jobs:
       - name: Package build tree for local compiles
         if: always()
         run: |
+          # If preflight failed, the build script never cloned/built XNU.
+          # Avoid turning the useful root-cause failure into extra tar errors.
+          if [ ! -d dxb/xnu ] || [ ! -d dxb/build/xnu.obj ] || [ ! -d dxb/fakeroot/usr/local/include ]; then
+            echo "::notice::Build tree is incomplete; skipping local compile package"
+            exit 0
+          fi
+
           # Generated headers, config option headers, mig output and the patched
           # source: enough to re-run any single compile command from the log locally.
           SDK=$(xcrun --sdk macosx --show-sdk-path)
@@ -179,6 +186,9 @@ jobs:
         run: |
           mkdir -p out/kdk-libs
           for lib in /Library/Developer/KDKs/*/System/Library/KernelSupport/lib*.a; do
+            # With no KDK installed yet, bash leaves an unmatched glob literal.
+            # Do not create NTFS-invalid filenames such as "lib*.members.txt".
+            [ -e "$lib" ] || continue
             b=$(basename "$lib" .a)
             ar t "$lib" > "out/kdk-libs/$b.members.txt" 2>&1 || true
             nm -m "$lib" > "out/kdk-libs/$b.nm.txt" 2>&1 || true
