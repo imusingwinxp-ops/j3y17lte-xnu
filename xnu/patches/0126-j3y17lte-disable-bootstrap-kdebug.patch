@@ -1,6 +1,6 @@
 --- a/osfmk/kern/startup.c
 +++ b/osfmk/kern/startup.c
-@@ -226,15 +226,25 @@
+@@ -226,19 +226,33 @@
  static inline void
  kernel_bootstrap_log(const char *message)
  {
