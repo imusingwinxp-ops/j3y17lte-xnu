@@ -109,7 +109,7 @@ jobs:
             cp -R dxb/fakeroot/System/Library/Kernels/. out/
             test -s out/kernel.development.j3y17lte
             file out/kernel.development.j3y17lte
-            file out/kernel.development.j3y17lte | grep -q 'Mach-O 64-bit arm64'
+            file out/kernel.development.j3y17lte | grep -Eq 'Mach-O 64-bit.*arm64'
             (
               cd out
               shasum -a 256 kernel.* > SHA256SUMS
@@ -117,6 +117,11 @@ jobs:
             )
             tar -czf j3y17lte-xnu-kernel.tgz -C out .
             shasum -a 256 j3y17lte-xnu-kernel.tgz
+
+      # Retain the raw kernel even if a later packaging step fails.
+      - store_artifacts:
+          path: out/kernel.development.j3y17lte
+          destination: kernel.development.j3y17lte
 
       - store_artifacts:
           path: j3y17lte-xnu-kernel.tgz
