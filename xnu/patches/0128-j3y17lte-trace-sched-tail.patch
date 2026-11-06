@@ -1,0 +1,67 @@
+--- a/osfmk/arm64/sweet_early.c
++++ b/osfmk/arm64/sweet_early.c
+@@ -45,6 +45,6 @@
+ {
+ 	(void)label;
+ 
+-	if (early_disabled || stage > 120) {
++	if (early_disabled || stage > 140) {
+ 		return;
+ 	}
+@@ -79,11 +79,18 @@
+ 		marker_stage = stage - 81;
+ 		marker_y = 668u;
+-	} else {
++	} else if (stage <= 120) {
+ 		/*
+ 		 * J3XNU019:
+ 		 * stages 101..120 use a sixth diagnostic row. Scanlines
+ 		 * 656..663 remain inside the bootstrap framebuffer aperture.
+ 		 */
+ 		marker_stage = stage - 101;
+ 		marker_y = 656u;
++	} else {
++		/*
++		 * J3XNU022: stages 121..140 use scanlines 644..651,
++		 * remaining inside the first 2 MiB framebuffer aperture.
++		 */
++		marker_stage = stage - 121;
++		marker_y = 644u;
+ 	}
+--- a/osfmk/kern/sched_prim.c
++++ b/osfmk/kern/sched_prim.c
+@@ -495,9 +495,22 @@
+ 	sweet_early_mark(120, "J3XNU021 deadline tracking initialized");
+ #endif
+ 
++#if defined(J3Y17LTE)
++	sweet_early_mark(121, "J3XNU022 before pset_init");
++#endif
+ 	SCHED(pset_init)(&pset0);
++#if defined(J3Y17LTE)
++	sweet_early_mark(122, "J3XNU022 pset_init returned");
++	sweet_early_mark(123, "J3XNU022 before processor_init");
++#endif
+ 	SCHED(processor_init)(master_processor);
++#if defined(J3Y17LTE)
++	sweet_early_mark(124, "J3XNU022 processor_init returned");
++#endif
+ 
+ 	if (PE_parse_boot_argn("direct_handoff", &direct_handoff, sizeof(direct_handoff))) {
+ 		allow_direct_handoff = direct_handoff;
+ 	}
++#if defined(J3Y17LTE)
++	sweet_early_mark(125, "J3XNU022 direct_handoff checked");
++#endif
+@@ -518,4 +518,11 @@
+ #endif /* DEVELOPMENT || DEBUG */
+ 
++#if defined(J3Y17LTE)
++	sweet_early_mark(126, "J3XNU022 debug scheduler flags checked");
++	sweet_early_mark(127, "J3XNU022 before available cores lock init");
++#endif
+ 	simple_lock_init(&sched_available_cores_lock, 0);
++#if defined(J3Y17LTE)
++	sweet_early_mark(128, "J3XNU022 sched_init tail complete");
++#endif
+ }
