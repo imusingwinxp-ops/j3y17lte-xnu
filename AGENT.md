@@ -93,6 +93,17 @@ Do not assume callback index `i` maps to a specific C function merely by filesys
 
 ## User-side artifact, packaging and Odin workflow
 
+### J3XNU025 packaging completed (user terminal log, 7 November 2026)
+
+CircleCI pipeline **#11 succeeded** for J3XNU025 commit `7ee1e8b1361006359b71233924cd4dceb96253fd`. The user downloaded the artifact as `C:\Users\BalJai\Downloads\j3y17lte-xnu-kernel (2).tgz` and successfully performed all validation/packaging steps on Kali WSL:
+
+- Archive `SHA256SUMS`: **OK**. Mach-O: **64-bit arm64 executable**. Embedded `J3XNU025 mig_init entered`, `J3XNU025 mig_init returning`, `J3XNU025 MIG subsystem populated`: all found.
+- J3XNU025 raw Mach-O SHA256: `e933fb18ba2c22d9ad9ba7529377a9ea7a70a8965002aa229831a1bcdda9e87b`.
+- Repacked recovery image SHA256: `baae21dd80dd3942ff5e811593fe9af0e9f55950822a1fe552fe1e59dc424f1e`.
+- Odin tar SHA256: `a70dab8a88512db7de23cab4d4e27b7a055a1a6e0c15eb82ec8d44a0b3d2e353`.
+- Odin package path: `C:\Users\BalJai\Downloads\recovery-j3xnu025-odin.tar`. Tar contains precisely `recovery.img`; repacked image maintains `SEANDROIDENFORCE` trailer. Packaging script printed `SUCCESS: J3XNU025 Odin package ready!`.
+- **Device boot/photo NOT YET PROVIDED for J3XNU025.** Next: carefully flash the verified package to the **recovery** partition only using the already tested Odin recovery procedure, if user confirms device identity, backup, and recovery path; request a clear phone photo. Interpret rows y596 (201–220), y584 (221–240), y572 (241–260) and original callback row y608 (181–200) to determine whether `_mig_init` returns. Do not infer the kernel has advanced just from successful packaging.
+
 At handoff, the user downloaded J3XNU024's `j3y17lte-xnu-kernel.tgz` from CircleCI. Their Windows browser named it **`j3y17lte-xnu-kernel (1).tgz`**. A full Bash packaging command was provided in the previous conversation using:
 
 ```bash
