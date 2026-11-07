@@ -32,6 +32,26 @@ jobs:
             sed -i '' 's/ARCHS="x86_64 arm64e" VALID_ARCHS="x86_64 arm64e"/ARCHS="x86_64 arm64e arm64" VALID_ARCHS="x86_64 arm64e arm64"/' dxb/build.sh
             grep -Fq 'VALID_ARCHS="x86_64 arm64e arm64"' dxb/build.sh
 
+            # libfirehose_kernel is built separately from XNU.  The stock dxb
+            # invocation builds Apple-oriented arm64e/host slices; on Cortex-A53
+            # that allowed FEAT_LSE instructions such as LDADD into the final kernel.
+            # Build the firehose archive as plain ARM64 with explicit A53 codegen.
+            python3 - <<'PY'
+            from pathlib import Path
+            p = Path("dxb/build.sh")
+            text = p.read_text()
+            old = 'xcodebuild install -target libfirehose_kernel -sdk macosx ARCHS="x86_64 arm64e arm64" VALID_ARCHS="x86_64 arm64e arm64" OBJROOT="${OBJROOT}" SYMROOT="${SYMROOT}" DSTROOT="${DSTROOT}" FAKEROOT_DIR="${FAKEROOT_DIR}"'
+            new = 'xcodebuild install -target libfirehose_kernel -sdk macosx ARCHS="arm64" VALID_ARCHS="arm64" OTHER_CFLAGS="-mkernel -nostdinc -Wno-packed -mcpu=cortex-a53" OBJROOT="${OBJROOT}" SYMROOT="${SYMROOT}" DSTROOT="${DSTROOT}" FAKEROOT_DIR="${FAKEROOT_DIR}"'
+            if text.count(old) != 1:
+                raise SystemExit(f"expected exactly one libfirehose build command, found {text.count(old)}")
+            text = text.replace(old, new)
+            p.write_text(text)
+            PY
+
+            grep -Fq 'libfirehose_kernel -sdk macosx ARCHS="arm64" VALID_ARCHS="arm64"' dxb/build.sh
+            grep -Fq 'OTHER_CFLAGS="-mkernel -nostdinc -Wno-packed -mcpu=cortex-a53"' dxb/build.sh
+            bash -n dxb/build.sh
+
       - run:
           name: Install dependencies and inspect Xcode
           command: |
@@ -105,6 +125,18 @@ jobs:
             export CCACHE=ccache
             export MAKEFLAGS=-k
             bash build.sh
+
+            echo "===== VERIFY CORTEX-A53 FIREHOSE CODEGEN ====="
+            FIREHOSE="fakeroot/usr/local/lib/kernel/libfirehose_kernel.a"
+            test -s "$FIREHOSE"
+            xcrun otool -tvV "$FIREHOSE" > /tmp/j3-firehose-disasm.txt
+
+            if grep -Ei '[[:space:]](ldadd|ldclr|ldeor|ldset|ldsmax|ldsmin|ldumax|ldumin|swp|casp?|ldapr)[a-z]*[[:space:]]' /tmp/j3-firehose-disasm.txt; then
+              echo "ERROR: ARMv8.1+ atomic/RCpc instruction remains in libfirehose_kernel.a"
+              exit 1
+            fi
+
+            echo "libfirehose_kernel Cortex-A53 instruction gate: PASS"
 
       - run:
           name: Verify and package ARM64 kernel
