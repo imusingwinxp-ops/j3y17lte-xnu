@@ -1,0 +1,85 @@
+diff --git a/osfmk/arm64/sweet_early.c b/osfmk/arm64/sweet_early.c
+index 8424a6c..3356558 100644
+--- a/osfmk/arm64/sweet_early.c
++++ b/osfmk/arm64/sweet_early.c
+@@ -45,7 +45,7 @@ sweet_early_mark(unsigned int stage, const char *label)
+ {
+ 	(void)label;
+ 
+-	if (early_disabled || stage > 320) {
++	if (early_disabled || stage > 340) {
+ 		return;
+ 	}
+ 
+@@ -127,10 +127,14 @@ sweet_early_mark(unsigned int stage, const char *label)
+ 		/* J3XNU026: callbacks 40..42 and final exit markers. */
+ 		marker_stage = stage - 281;
+ 		marker_y = 548u;
+-	} else {
++	} else if (stage <= 320) {
+ 		/* J3XNU027: callback 38 and IOKIT_CONNECT registration. */
+ 		marker_stage = stage - 301;
+ 		marker_y = 536u;
++	} else {
++		/* J3XNU028: transition after MACH_IPC callback 37. */
++		marker_stage = stage - 321;
++		marker_y = 524u;
+ 	}
+ 
+ 	unsigned int x0 = marker_stage * J3_MARK_STEP;
+@@ -173,6 +177,9 @@ sweet_early_panic(const char *fmt, va_list *args)
+ 	(void)fmt;
+ 	(void)args;
+ 
++	/* J3XNU028: separate panic entry from the older stage 80. */
++	sweet_early_mark(326, "J3XNU028 early panic entered");
++
+ 	/*
+ 	 * Stage 80 is reserved as the unambiguous panic indicator.
+ 	 */
+diff --git a/osfmk/kern/startup.c b/osfmk/kern/startup.c
+index ce4e1a0..e13a846 100644
+--- a/osfmk/kern/startup.c
++++ b/osfmk/kern/startup.c
+@@ -421,6 +421,9 @@ kernel_startup_initialize_upto(startup_subsystem_id_t upto)
+ 
+ 	while (cur < startup_entries_end && cur->subsystem <= upto) {
+ #if defined(J3Y17LTE)
++		if (j3_mach_ipc_callback_index == 38u) {
++			sweet_early_mark(324, "J3XNU028 callback 38 loop entered");
++		}
+ 		if (cur->subsystem == STARTUP_SUB_MACH_IPC &&
+ 		    j3_mach_ipc_callback_index == 38u) {
+ 			sweet_early_mark(301, "J3XNU027 callback 38 dispatch entered");
+@@ -510,11 +513,21 @@ kernel_startup_initialize_upto(startup_subsystem_id_t upto)
+ 				sweet_early_mark(281u + j3_mach_ipc_callback_index - 40u,
+ 				    "J3XNU026 Mach IPC callback 40-42 returned");
+ 			}
++			if (j3_mach_ipc_callback_index == 37u) {
++				sweet_early_mark(321, "J3XNU028 callback 37 return mark completed");
++			}
+ 			j3_mach_ipc_callback_index++;
++			if (j3_mach_ipc_callback_index == 38u) {
++				sweet_early_mark(322, "J3XNU028 callback counter advanced to 38");
++			}
+ 		}
+ #endif
+ 		startup_entry_cur = ++cur;
+ #if defined(J3Y17LTE)
++		if (j3_mach_ipc_callback_index == 38u &&
++		    startup_phase == STARTUP_SUB_MACH_IPC - 1) {
++			sweet_early_mark(323, "J3XNU028 callback 38 cursor advanced");
++		}
+ 		if (j3_mach_ipc_callback_index == 39u &&
+ 		    startup_phase == STARTUP_SUB_MACH_IPC - 1) {
+ 			sweet_early_mark(306, "J3XNU027 callback 38 cursor committed");
+@@ -522,6 +535,9 @@ kernel_startup_initialize_upto(startup_subsystem_id_t upto)
+ #endif
+ 	}
+ #if defined(J3Y17LTE)
++	if (j3_mach_ipc_callback_index == 38u) {
++		sweet_early_mark(325, "J3XNU028 loop exited before callback 38");
++	}
+ 	if (upto == STARTUP_SUB_MACH_IPC) {
+ 		sweet_early_mark(284, "J3XNU026 MACH_IPC callback loop completed");
+ 	}
