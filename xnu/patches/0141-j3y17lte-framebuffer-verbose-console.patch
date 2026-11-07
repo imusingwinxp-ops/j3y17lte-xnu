@@ -1,7 +1,8 @@
 diff --git a/osfmk/arm64/sweet_early.c b/osfmk/arm64/sweet_early.c
 --- a/osfmk/arm64/sweet_early.c
 +++ b/osfmk/arm64/sweet_early.c
-@@ -37,7 +37,78 @@ void
+@@ -1,7 +1,87 @@
+ void
  sweet_early_putc(char c)
  {
 -	(void)c;
@@ -92,8 +93,7 @@ diff --git a/osfmk/arm64/sweet_early.c b/osfmk/arm64/sweet_early.c
 diff --git a/osfmk/console/serial_console.c b/osfmk/console/serial_console.c
 --- a/osfmk/console/serial_console.c
 +++ b/osfmk/console/serial_console.c
-@@ -238,6 +238,16 @@ _cnputc(char c, bool poll)
- 	if (c == '\n') {
+@@ -2,5 +2,17 @@
  		_cnputc('\r', poll);
  	}
  
