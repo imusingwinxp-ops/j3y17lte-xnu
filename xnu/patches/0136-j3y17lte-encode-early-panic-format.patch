@@ -1,0 +1,67 @@
+diff --git a/osfmk/arm64/sweet_early.c b/osfmk/arm64/sweet_early.c
+index fb6a1ff..3c514be 100644
+--- a/osfmk/arm64/sweet_early.c
++++ b/osfmk/arm64/sweet_early.c
+@@ -45,7 +45,7 @@ sweet_early_mark(unsigned int stage, const char *label)
+ {
+ 	(void)label;
+ 
+-	if (early_disabled || stage > 360) {
++	if (early_disabled || stage > 380) {
+ 		return;
+ 	}
+ 
+@@ -135,10 +135,14 @@ sweet_early_mark(unsigned int stage, const char *label)
+ 		/* J3XNU028: transition after MACH_IPC callback 37. */
+ 		marker_stage = stage - 321;
+ 		marker_y = 524u;
+-	} else {
++	} else if (stage <= 360) {
+ 		/* J3XNU029: callback 37 and IOKIT_OBJECT registration. */
+ 		marker_stage = stage - 341;
+ 		marker_y = 512u;
++	} else {
++		/* J3XNU030: panic format signature status. */
++		marker_stage = stage - 361;
++		marker_y = 500u;
+ 	}
+ 
+ 	unsigned int x0 = marker_stage * J3_MARK_STEP;
+@@ -184,6 +188,37 @@ sweet_early_panic(const char *fmt, va_list *args)
+ 	/* J3XNU028: separate panic entry from the older stage 80. */
+ 	sweet_early_mark(326, "J3XNU028 early panic entered");
+ 
++	/*
++	 * J3XNU030: read-only panic-format signature. Paint up to the first
++	 * sixteen literal format bytes as a 16x8 binary grid in an unused
++	 * framebuffer area (x=96..599, y=360..435). Top bit is bit 7.
++	 * Cyan means 1; red means 0. Each cell is 24x6 with gaps.
++	 * No allocator, printf, locks or writes to XNU state are involved.
++	 * This is a diagnostic barcode, not an iOS graphical boot.
++	 */
++	if (!early_disabled && fmt != 0) {
++		sweet_early_mark(361, "J3XNU030 panic format signature entered");
++		for (unsigned int i = 0; i < 16u; i++) {
++			unsigned char ch = (unsigned char)fmt[i];
++			if (ch == 0u) {
++				break;
++			}
++			for (unsigned int bit = 0; bit < 8u; bit++) {
++				uint32_t colour = (ch & (1u << (7u - bit))) ?
++				    0xff00ffffu : 0xffff2040u;
++				for (unsigned int dy = 0; dy < 6u; dy++) {
++					volatile uint32_t *row = early_fb +
++					    (360u + bit * 10u + dy) * J3_EARLY_STRIDE_PIXELS;
++					for (unsigned int dx = 0; dx < J3_MARK_W; dx++) {
++						row[96u + i * J3_MARK_STEP + dx] = colour;
++					}
++				}
++			}
++		}
++		__asm__ volatile("dsb sy" ::: "memory");
++		sweet_early_mark(362, "J3XNU030 panic format signature completed");
++	}
++
+ 	/*
+ 	 * Stage 80 is reserved as the unambiguous panic indicator.
+ 	 */
