@@ -1,0 +1,107 @@
+diff --git a/osfmk/arm64/sweet_early.c b/osfmk/arm64/sweet_early.c
+index 8ba6f32..f95d4f7 100644
+--- a/osfmk/arm64/sweet_early.c
++++ b/osfmk/arm64/sweet_early.c
+@@ -38,7 +38,7 @@ sweet_early_mark(unsigned int stage, const char *label)
+ {
+ 	(void)label;
+ 
+-	if (early_disabled || stage > 200) {
++	if (early_disabled || stage > 260) {
+ 		return;
+ 	}
+ 
+@@ -96,10 +96,22 @@ sweet_early_mark(unsigned int stage, const char *label)
+ 		/* J3XNU024: entry logging has returned. */
+ 		marker_stage = stage - 161;
+ 		marker_y = 620u;
+-	} else {
++	} else if (stage <= 200) {
+ 		/* J3XNU024: initializer function has returned. */
+ 		marker_stage = stage - 181;
+ 		marker_y = 608u;
++	} else if (stage <= 220) {
++		/* J3XNU025: mig_init milestone markers. */
++		marker_stage = stage - 201;
++		marker_y = 596u;
++	} else if (stage <= 240) {
++		/* J3XNU025: MIG subsystem processing started. */
++		marker_stage = stage - 221;
++		marker_y = 584u;
++	} else {
++		/* J3XNU025: MIG subsystem processing returned. */
++		marker_stage = stage - 241;
++		marker_y = 572u;
+ 	}
+ 
+ 	unsigned int x0 = marker_stage * J3_MARK_STEP;
+diff --git a/osfmk/kern/ipc_kobject.c b/osfmk/kern/ipc_kobject.c
+index f15fe77..f954c0d 100644
+--- a/osfmk/kern/ipc_kobject.c
++++ b/osfmk/kern/ipc_kobject.c
+@@ -229,11 +229,24 @@ __startup_func
+ static void
+ mig_init(void)
+ {
++#if defined(J3Y17LTE)
++	extern void sweet_early_mark(unsigned int, const char *);
++#endif
+ 	unsigned int i, n = sizeof(mig_e) / sizeof(const struct mig_subsystem *);
+ 	int howmany;
+ 	mach_msg_id_t j, pos, nentry, range;
++#if defined(J3Y17LTE)
++	sweet_early_mark(201, "J3XNU025 mig_init entered");
++	sweet_early_mark(202, "J3XNU025 MIG subsystem count ready");
++	sweet_early_mark(203, "J3XNU025 beginning MIG table population");
++#endif
+ 
+ 	for (i = 0; i < n; i++) {
++#if defined(J3Y17LTE)
++		if (i < 20u) {
++			sweet_early_mark(221u + i, "J3XNU025 MIG subsystem entered");
++		}
++#endif
+ 		range = mig_e[i]->end - mig_e[i]->start;
+ 		if (!mig_e[i]->start || range < 0) {
+ 			panic("the msgh_ids in mig_e[] aren't valid!");
+@@ -253,7 +266,9 @@ mig_init(void)
+ 				    mig_buckets[pos].num;
+ 				    pos++, pos = pos % MAX_MIG_ENTRIES, howmany++) {
+ 					if (mig_buckets[pos].num == nentry) {
++#if !defined(J3Y17LTE)
+ 						printf("message id = %d\n", nentry);
++#endif
+ 						panic("multiple entries with the same msgh_id");
+ 					}
+ 					if (howmany == MAX_MIG_ENTRIES) {
+@@ -277,13 +292,30 @@ mig_init(void)
+ 				mach_kobj_count++;
+ 			}
+ 		}
++#if defined(J3Y17LTE)
++		if (i < 20u) {
++			sweet_early_mark(241u + i, "J3XNU025 MIG subsystem populated");
++		}
++#endif
+ 	}
+ 
+ 	/* 77417305: pad to allow for MIG routines removals/cleanups */
++#if defined(J3Y17LTE)
++	sweet_early_mark(204, "J3XNU025 MIG table population complete");
++#endif
+ 	mach_kobj_count += 32;
+ 
++#if defined(J3Y17LTE)
++	sweet_early_mark(205, "J3XNU025 MIG table padding applied");
++	/* Do not re-enter the early J3 printf/console path during boot. */
++	sweet_early_mark(206, "J3XNU025 informational MIG printf bypassed");
++#else
+ 	printf("mig_table_max_displ = %d mach_kobj_count = %d\n",
+ 	    mig_table_max_displ, mach_kobj_count);
++#endif
++#if defined(J3Y17LTE)
++	sweet_early_mark(207, "J3XNU025 mig_init returning");
++#endif
+ }
+ STARTUP(MACH_IPC, STARTUP_RANK_FIRST, mig_init);
+ 

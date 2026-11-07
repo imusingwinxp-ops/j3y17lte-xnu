@@ -46,6 +46,9 @@ The framebuffer code is `osfmk/arm64/sweet_early.c`, patched in order. Diagnosti
 | 141–160 | 632 | **J3XNU024 callback entered**, index 0–19 |
 | 161–180 | 620 | **J3XNU024 startup logging returned**, index 0–19 |
 | 181–200 | 608 | **J3XNU024 callback function returned**, index 0–19 |
+| 201–220 | 596 | **J3XNU025 `_mig_init` milestone**, 201–207 currently assigned |
+| 221–240 | 584 | **J3XNU025 MIG subsystem entered**, zero-based index 0–19 |
+| 241–260 | 572 | **J3XNU025 MIG subsystem finished**, zero-based index 0–19 |
 
 **IMPORTANT CORRECTION TO A PREVIOUS CHAT MESSAGE:** The new rows in a photo appear from **top to bottom** as **181–200 returned**, then **161–180 logging returned**, then **141–160 entered**. The previous assistant's chat table accidentally inverted top/bottom. Always use the precise y coordinates and the new patch, not that old table.
 
@@ -70,12 +73,11 @@ Do not assume callback index `i` maps to a specific C function merely by filesys
 
 ## Next session procedure
 
-1. Current photo has been decoded: callback index **15** reaches stage **176** but not **196**; source-level diagnosis is now the blocker, not image interpretation.
-2. Obtain the **J3XNU024 raw Mach-O kernel** from the already built artifact, preferably ask user to attach `j3y17lte-xnu-kernel (1).tgz` from Windows Downloads. Verify `SHA256SUMS` and `J3XNU024` strings before analyzing. Decode Mach-O section `__init_entry_set` and symbol addresses to map sorted entry index 15 to function and potentially `cur->arg`. Take care that `startup_entry_cur` may already be past earlier startup phases.
-3. Read latest GitHub main and **all relevant existing patches**, especially `0118`, `0120`, `0121`, `0124`, `0125`, `0127`–`0130`, plus `.circleci/config.yml`, **before** planning a new patch.
-4. Diagnose the specific failing function. Prefer targeted diagnostics or narrow J3-only fixes. **Do not bypass core IPC, scheduler, VM, or security initialisation blindly.** Do not claim boot progress past what the phone displays.
-5. Only when the diagnosis warrants it, create **one** well-tested new patch (likely `0131-....patch`), **update this AGENT.md in the same atomic commit**, and ensure CI assertions are correct. Let CircleCI run exactly once if possible.
-6. Upon green CI, instruct user to download the new artifact, verify `SHA256SUMS`, verify Mach-O arm64 and **version-specific embedded strings**, then package a **newly versioned recovery image** using their established scripts. Avoid overwriting earlier packages.
+1. **J3XNU024 artifact was received and analyzed offline.** Its `kernel.development.j3y17lte` SHA256 is `808ba33e1f3655f9772eb6b1fe69395f06226ea4719bb0d76711ab0e71304f23`, with archive checksums verified. The screenshot showed stage 176 but not 196: the 16th (zero-based index 15) `MACH_IPC` callback is stuck after entry logging.
+2. **Runtime function IDENTIFIED conclusively:** Decode Mach-O `__BOOTDATA,__init_entry_set`, 24-byte startup entries `(uint32 subsystem, uint32 rank, uint64 func, uint64 arg)`. Sort the entries using the actual Apple XNU `bsd/kern/qsort.c` comparator `(subsystem, rank)`. There are 43 `MACH_IPC` entries (`subsystem=13`). Sorted callback index 15 is **`_mig_init`** at `0xfffffff007a48144`, arg `NULL`, in **`osfmk/kern/ipc_kobject.c`**. Unlike earlier guesses, this is not a scheduler callback. The local reference `libxnu_qsort_reference.so` verified mapping.
+3. The immediate next experiment is **J3XNU025**, patch file `xnu/patches/0131-j3y17lte-trace-mig-init.patch`. It adds marks 201–207 around `mig_init`, 221–240 before MIG subsystem entries, and 241–260 after each subsystem; J3-specific bypass of **informational** final `printf` (and error-only diagnostic `printf`), preserving table population and `panic` paths. Marker screen y coordinates are 596, 584, and 572 respectively. The `sweet_early_mark` cap increases from 200 to 260. The patch was regenerated with accurate diffs after earlier handwritten patch failures, and verified using `git apply --check --whitespace=error` against local fully patched XNU preflight tree. **A dry-run is not proof of compile or runtime success.**
+4. Check latest remote main and `.circleci/config.yml`, then make **one atomic commit** containing the patch and this updated `AGENT.md`, and let CI run **once**. Do not add another speculative change or burn CI credits validating patch format. On success download J3XNU025 archive, verify checksums and embedded `J3XNU025` strings, create uniquely versioned recovery via the existing packaging scripts, and request a new real-device photo before changing code again.
+5. **If the J3XNU025 photo shows per-subsystem entry but no matching completion**, the hot loop over MIG routine definitions/probing is the suspect. If all subsystems return and marker 207 is lit yet callback196 stays dark, investigate return to the startup dispatcher. If stage 207 and callback196 light, continue inspecting callback16 onwards. Do not assume iOS userspace is running.
 
 ## Stop wasting CI credits: required edit/preflight discipline
 
@@ -122,4 +124,4 @@ Previous J3XNU022 packaging was successful with Mach-O SHA256 `ebeb0062732244c1c
 
 ## Immediate handoff sentence
 
-**We have a green J3XNU024 kernel on CircleCI (#10), physically tested. The photo proves Mach IPC startup callbacks 0–14 returned; callback index 15 (the 16th) entered and its logging returned, but its function did not (stage 196 missing). Inspect the existing J3XNU024 Mach-O kernel to identify the exact runtime startup entry, including macro-generated `IPC_KOBJECT_DEFINE` registrations, BEFORE pushing another patch. Every future code-change commit must simultaneously update AGENT.md.**
+**J3XNU024 CircleCI #10 green and physically tested. Runtime startup sorted callback index15 was definitively identified from the Mach-O binary as `_mig_init` (`osfmk/kern/ipc_kobject.c`), and it did not return. The next targeted experiment J3XNU025 traces the MIG routine-table population while bypassing its final informational `printf` only for J3. Every future code-change commit MUST simultaneously update AGENT.md.**
