@@ -1,69 +1,80 @@
-diff --git a/osfmk/arm64/sweet_early.c b/osfmk/arm64/sweet_early.c
---- a/osfmk/arm64/sweet_early.c
-+++ b/osfmk/arm64/sweet_early.c
-@@ -1,7 +1,87 @@
- void
- sweet_early_putc(char c)
- {
--	(void)c;
-+	/*
-+	 * J3XNU037: compact verbose console in the safely mapped top portion
-+	 * of the J3 framebuffer. Keep this self-contained so it does not
-+	 * depend on later marker-layout patches.
-+	 *
-+	 * 720 px / 8 px = 90 columns
-+	 * 21 rows * 16 px = 336 scanlines
-+	 */
-+	static unsigned int text_row;
-+	static unsigned int text_col;
-+	static unsigned int text_started;
-+	extern unsigned char iso_font[256 * 16];
-+	enum {
-+		TEXT_WIDTH = 720,
-+		TEXT_CELL_W = 8,
-+		TEXT_CELL_H = 16,
-+		TEXT_COLS = TEXT_WIDTH / TEXT_CELL_W,
-+		TEXT_ROWS = 21,
-+	};
+diff --git a/osfmk/arm64/j3_fbconsole.c b/osfmk/arm64/j3_fbconsole.c
+new file mode 100644
+index 0000000..e91f224
+--- /dev/null
++++ b/osfmk/arm64/j3_fbconsole.c
+@@ -0,0 +1,99 @@
++/*
++ * J3XNU037: minimal framebuffer console for Galaxy J3 2017 bring-up.
++ *
++ * arm_vm_init maps the first 2 MiB of physical framebuffer 0x67000000 at
++ * VM_MIN_KERNEL_ADDRESS + ARM_TT_L2_SIZE before KPRINTF startup.  Keep text
++ * within scanlines 0..335 so the lower marker/barcode diagnostics remain
++ * available.
++ */
 +
-+	if (early_disabled) {
-+		return;
-+	}
++#include <stdint.h>
++#include <mach/vm_param.h>
++#include <arm64/proc_reg.h>
++#include <pexpert/arm64/board_config.h>
 +
-+	if (!text_started) {
-+		text_started = 1u;
-+		for (unsigned int y = 0; y < TEXT_CELL_H; y++) {
-+			volatile uint32_t *line =
-+			    early_fb + y * J3_EARLY_STRIDE_PIXELS;
-+			for (unsigned int x = 0; x < TEXT_WIDTH; x++) {
-+				line[x] = 0xff000000u;
-+			}
++#if defined(J3Y17LTE)
++
++#define J3_FBCON_WIDTH          720u
++#define J3_FBCON_STRIDE_PIXELS (2880u / 4u)
++#define J3_FBCON_CELL_W         8u
++#define J3_FBCON_CELL_H         16u
++#define J3_FBCON_COLS           (J3_FBCON_WIDTH / J3_FBCON_CELL_W)
++#define J3_FBCON_ROWS           21u
++#define J3_FBCON_FG             0xffffffffu
++#define J3_FBCON_BG             0xff000000u
++
++extern unsigned char iso_font[256 * 16];
++
++static volatile uint32_t * const j3_fbcon =
++    (volatile uint32_t *)(uintptr_t)(VM_MIN_KERNEL_ADDRESS + ARM_TT_L2_SIZE);
++
++static unsigned int j3_fbcon_row;
++static unsigned int j3_fbcon_col;
++static unsigned int j3_fbcon_started;
++
++static void
++j3_fbconsole_clear_row(unsigned int row)
++{
++	for (unsigned int y = row * J3_FBCON_CELL_H;
++	    y < (row + 1u) * J3_FBCON_CELL_H; y++) {
++		volatile uint32_t *line =
++		    j3_fbcon + y * J3_FBCON_STRIDE_PIXELS;
++		for (unsigned int x = 0; x < J3_FBCON_WIDTH; x++) {
++			line[x] = J3_FBCON_BG;
 +		}
++	}
++}
++
++void
++j3_fbconsole_putc(char c)
++{
++	if (!j3_fbcon_started) {
++		j3_fbcon_started = 1u;
++		j3_fbconsole_clear_row(0u);
 +	}
 +
 +	if (c == '\r') {
-+		text_col = 0u;
++		j3_fbcon_col = 0u;
 +		return;
 +	}
 +
 +	if (c == '\b') {
-+		if (text_col != 0u) {
-+			text_col--;
++		if (j3_fbcon_col != 0u) {
++			j3_fbcon_col--;
 +		}
 +		return;
 +	}
 +
-+	if (c == '\n' || text_col >= TEXT_COLS) {
-+		text_col = 0u;
-+		text_row = (text_row + 1u) % TEXT_ROWS;
-+		for (unsigned int y = text_row * TEXT_CELL_H;
-+		    y < (text_row + 1u) * TEXT_CELL_H; y++) {
-+			volatile uint32_t *line =
-+			    early_fb + y * J3_EARLY_STRIDE_PIXELS;
-+			for (unsigned int x = 0; x < TEXT_WIDTH; x++) {
-+				line[x] = 0xff000000u;
-+			}
-+		}
++	if (c == '\n' || j3_fbcon_col >= J3_FBCON_COLS) {
++		j3_fbcon_col = 0u;
++		j3_fbcon_row = (j3_fbcon_row + 1u) % J3_FBCON_ROWS;
++		j3_fbconsole_clear_row(j3_fbcon_row);
 +		__asm__ volatile("dsb sy" ::: "memory");
 +		if (c == '\n') {
 +			return;
@@ -75,37 +86,52 @@ diff --git a/osfmk/arm64/sweet_early.c b/osfmk/arm64/sweet_early.c
 +	}
 +
 +	const unsigned char *glyph = iso_font + (unsigned char)c * 16u;
-+	unsigned int x0 = text_col * TEXT_CELL_W;
-+	unsigned int y0 = text_row * TEXT_CELL_H;
++	unsigned int x0 = j3_fbcon_col * J3_FBCON_CELL_W;
++	unsigned int y0 = j3_fbcon_row * J3_FBCON_CELL_H;
++
 +	for (unsigned int gy = 0; gy < 16u; gy++) {
 +		volatile uint32_t *line =
-+		    early_fb + (y0 + gy) * J3_EARLY_STRIDE_PIXELS + x0;
++		    j3_fbcon + (y0 + gy) * J3_FBCON_STRIDE_PIXELS + x0;
 +		for (unsigned int gx = 0; gx < 8u; gx++) {
 +			line[gx] = (glyph[gy] & (1u << gx)) ?
-+			    0xffffffffu : 0xff000000u;
++			    J3_FBCON_FG : J3_FBCON_BG;
 +		}
 +	}
-+	text_col++;
++
++	j3_fbcon_col++;
 +	__asm__ volatile("dsb sy" ::: "memory");
- }
- 
- void
++}
++
++#endif /* J3Y17LTE */
+diff --git a/osfmk/conf/files.arm64 b/osfmk/conf/files.arm64
+index 74d198f..91430b8 100644
+--- a/osfmk/conf/files.arm64
++++ b/osfmk/conf/files.arm64
+@@ -5,6 +5,7 @@ osfmk/arm/arm_timer.c		standard
+ osfmk/arm/arm_init.c	optional config_pmap_ppl
+ osfmk/arm64/arm_vm_init.c	optional config_pmap_ppl
+ osfmk/arm64/sweet_early.c	standard
++osfmk/arm64/j3_fbconsole.c	standard
+ osfmk/arm64/arm64_hypercall.c	standard
+ osfmk/arm/io_map.c		standard
+ osfmk/arm64/loose_ends.c	standard
 diff --git a/osfmk/console/serial_console.c b/osfmk/console/serial_console.c
+index fdad50d..0bf9eb8 100644
 --- a/osfmk/console/serial_console.c
 +++ b/osfmk/console/serial_console.c
-@@ -2,5 +2,17 @@
+@@ -10,5 +10,17 @@ _cnputc(char c, bool poll)
  		_cnputc('\r', poll);
  	}
  
 +#if defined(J3Y17LTE)
 +	/*
-+	 * J3XNU037: mirror the normal XNU console stream into the proven
-+	 * early/permanent J3 framebuffer alias. Stop mirroring once panic
-+	 * handling begins so the existing panic barcodes remain intact.
++	 * J3XNU037: mirror normal XNU console output to the J3's permanent
++	 * framebuffer alias once KPRINTF startup has completed. Panics keep
++	 * using the existing barcode diagnostics.
 +	 */
-+	extern void sweet_early_putc(char);
-+	if (!panic_active()) {
-+		sweet_early_putc(c);
++	extern void j3_fbconsole_putc(char);
++	if (startup_phase >= STARTUP_SUB_KPRINTF && !panic_active()) {
++		j3_fbconsole_putc(c);
 +	}
 +#endif
 +
