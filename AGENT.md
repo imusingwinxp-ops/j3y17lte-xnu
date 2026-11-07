@@ -2,13 +2,13 @@
 
 **Read this entire file before changing anything.** This is a status handoff for the user's active Samsung Galaxy J3 (2017) / Exynos 7570 XNU bring-up. It is not proof that iOS boots. The user calls the phone "J3", refers to the project as "J3XNU", and prefers short, accurate, test-backed steps. The user has repeatedly incurred unnecessary CircleCI credits from failed patch preflights and is particularly concerned about avoiding another failed CI run.
 
-**As of 2026-11-07:** J3XNU025 **successfully compiled in CircleCI pipeline #11**, packaged as a versioned Odin recovery tar (see checksums below), and physically tested. Its photo **proves `_mig_init` finishes and all first 20 Mach IPC callbacks return**. J3XNU026 is **now built successfully in CircleCI pipeline #12**, commit `c52a3551f4ba491bf377e76def9f987bc0a52ea0`; it extends completion tracing to callbacks 20–42 and the startup-phase exit. **J3XNU026 has NOT yet been downloaded, packaged, or physically tested.** The J3XNU025 photo also shows the stage-80 panic marker (likely a later panic) but does **not** show iOS userspace.
+**As of 2026-11-07:** J3XNU025 **successfully compiled in CircleCI pipeline #11**, packaged as a versioned Odin recovery tar (see checksums below), and physically tested. Its photo **proves `_mig_init` finishes and all first 20 Mach IPC callbacks return**. J3XNU026 **compiled successfully in CircleCI pipeline #12**, commit `c52a3551f4ba491bf377e76def9f987bc0a52ea0`; it extends completion tracing to callbacks 20–42 and the startup-phase exit. **J3XNU026 has now also been SHA-verified and packaged into an Odin recovery tar, but has NOT yet been physically tested.** The J3XNU025 photo shows the stage-80 panic marker (likely a later panic) but does **not** show iOS userspace.
 
 ## Canonical places and versions
 
 - GitHub repo: <https://github.com/imusingwinxp-ops/j3y17lte-xnu> (branch `main`).
 - Last verified **code** commit: `c52a3551f4ba491bf377e76def9f987bc0a52ea0` ("J3XNU026: trace remaining Mach IPC callbacks and phase exit; update AGENT.md").
-- Passing CI pipeline for that code: <https://circleci.com/gh/imusingwinxp-ops/j3y17lte-xnu/12> (green / success). Artifact in its **Artifacts** tab: `j3y17lte-xnu-kernel.tgz`, containing `kernel.development.j3y17lte` and `SHA256SUMS`. **Browser-assigned J3XNU026 archive name still unknown.** Prior J3XNU025 was called `j3y17lte-xnu-kernel (2).tgz`.
+- Passing CI pipeline for that code: <https://circleci.com/gh/imusingwinxp-ops/j3y17lte-xnu/12> (green / success). Artifact in its **Artifacts** tab: `j3y17lte-xnu-kernel.tgz`, containing `kernel.development.j3y17lte` and `SHA256SUMS`. User downloaded J3XNU026 as `j3y17lte-xnu-kernel (3).tgz` and verified/packaged it successfully.
 - Latest committed patch: `xnu/patches/0132-j3y17lte-trace-rest-mach-ipc.patch`.
 - CI config: `.circleci/config.yml`. GitHub Actions was blocked by GitHub billing/spend-limit restrictions; use CircleCI instead.
 - Donor heritage: `orhunnx/ios-a5xelte`, itself related to `ios-sweet`; the user is adapting an Exynos/Samsung-oriented XNU port to **Exynos 7570**, not making a working iOS 16 port from scratch.
@@ -79,7 +79,7 @@ Do not assume callback index `i` maps to a specific C function merely by filesys
 ## Next session procedure
 
 1. J3XNU025 is **complete and physically tested**. Its photo demonstrates all MIG init steps and all 20 tracked MACH_IPC callbacks return. **Do not generate a second J3XNU025 build.**
-2. J3XNU026 patch `0132` is **already committed and CircleCI-green on pipeline #12**; **do not rebuild**. Ask user to download `j3y17lte-xnu-kernel.tgz`, report browser-assigned filename, and use WSL to verify archive `SHA256SUMS`, Mach-O arm64, embedded unique `J3XNU026` strings. Package via existing scripts to uniquely versioned `tools/j3y17lte/j3xnu026.payload`, `recovery-j3xnu026.img`, and `out/j3xnu026/recovery-j3xnu026-odin.tar`, copying to Windows Downloads. Preserve J3XNU025 files. Confirm secure recovery-flash route before testing.
+2. J3XNU026 patch `0132` is **already committed, CircleCI-green on pipeline #12, checksum-verified and Odin-packaged**; **do not rebuild or repack**. The package is in Windows Downloads as `recovery-j3xnu026-odin.tar` with tar hash documented below. Confirm correct J330FN handset, original recovery backup and a working Download Mode/Odin recovery path before any recovery-partition test. Do not write BOOT/BL/CP/CSC.
 3. On J3XNU026 photo, count stages 261–280 and 281–283 to find the last returned callback. Stage284–287 indicate whether loop and final logging completed. **Take camera tilt into account** when counting right-hand columns; some marker colours are nearly black by design. Decode the J3XNU026 Mach-O for accurate function/arg mapping before designing another patch. **Every new code change must include AGENT.md in the same atomic commit.**
 
 ## Stop wasting CI credits: required edit/preflight discipline
@@ -95,6 +95,16 @@ Do not assume callback index `i` maps to a specific C function merely by filesys
 - Never force-push or rewrite the user's history to resolve an incidental issue.
 
 ## User-side artifact, packaging and Odin workflow
+
+### J3XNU026 packaging completed (user terminal log, 7 November 2026)
+
+User downloaded the CircleCI #12 artifact as `C:\Users\BalJai\Downloads\j3y17lte-xnu-kernel (3).tgz` and ran the WSL packaging sequence successfully with `set -euo pipefail`. Archive `SHA256SUMS` reported `kernel.development.j3y17lte: OK`, `file` reported `Mach-O 64-bit arm64 executable`, and `strings` found all three markers (`J3XNU026 Mach IPC callback 20-39 returned`, `J3XNU026 Mach IPC callback 40-42 returned`, `J3XNU026 MACH_IPC initializer returning`). Repacked image preserved `SEANDROIDENFORCE`, and Odin tar contains only `recovery.img`.
+
+- Raw J3XNU026 Mach-O SHA256: `fbe833b23fdd5bcd6efc3645d2a526f99af38289d072f0c784251549c78959c3`.
+- Recovery image SHA256: `3701ab13dd270c1b72f21fef91a4896697b782c07bc209ea01c4d78217c8416c`.
+- Odin tar SHA256: `bf54693a955ee9a7c3481a31da02abe9765931b80bc4229ea5a01bfbea301d63`.
+- User's Odin package: `C:\Users\BalJai\Downloads\recovery-j3xnu026-odin.tar`.
+- **Physical J3XNU026 boot result/photo is still PENDING.** Do not infer callback 20–42 progress until the user supplies the real-device photo or logs.
 
 ### J3XNU025 packaging completed (user terminal log, 7 November 2026)
 
@@ -138,4 +148,4 @@ Previous J3XNU022 packaging was successful with Mach-O SHA256 `ebeb0062732244c1c
 
 ## Immediate handoff sentence
 
-**J3XNU025 CircleCI #11 GREEN, SHA-verified and physically tested. It passes `_mig_init` and all first 20 MACH_IPC callbacks, with a stage80 panic marker lit and stage109 apparently absent. J3XNU026 patch `0132` extends callback return marks to indices20–42 and final loop/logging exit; its code commit `c52a3551...` and CircleCI #12 are GREEN. Await user download, J3XNU026 SHA-verified Odin packaging, and next actual-device photo. Every future code-change commit MUST simultaneously update AGENT.md.**
+**J3XNU025 CircleCI #11 GREEN, SHA-verified and physically tested. It passes `_mig_init` and all first 20 MACH_IPC callbacks, with a stage80 panic marker lit and stage109 apparently absent. J3XNU026 patch `0132` extends callback return marks to indices20–42 and final loop/logging exit; its code commit `c52a3551...` and CircleCI #12 are GREEN. The user has successfully verified and packaged J3XNU026; Odin tar SHA256 `bf54693a955ee9a7c3481a31da02abe9765931b80bc4229ea5a01bfbea301d63`. **Await J3XNU026 actual-device photo**; do not make another patch yet. Every future code-change commit MUST simultaneously update AGENT.md.**
