@@ -2,13 +2,13 @@
 
 **Read this entire file before changing anything.** This is a status handoff for the user's active Samsung Galaxy J3 (2017) / Exynos 7570 XNU bring-up. It is not proof that iOS boots. The user calls the phone "J3", refers to the project as "J3XNU", and prefers short, accurate, test-backed steps. The user has repeatedly incurred unnecessary CircleCI credits from failed patch preflights and is particularly concerned about avoiding another failed CI run.
 
-**As of 2026-11-07:** J3XNU025 CircleCI #11 and J3XNU026 CircleCI #12 **compiled, packaged and physically tested**. J3XNU025 passed `_mig_init` and the first 20 Mach IPC callbacks. J3XNU026's 11:50:51 photo suggests callbacks **through zero-based index37 return**, but stage279 (callback index38 returned) is absent; stage281–287 end-of-phase markers are absent, and stage80 panic marker is lit. The user attached the **exact J3XNU026 archive**, verified `SHA256SUMS`, and its Mach-O sorted startup table unambiguously maps callback38 to `ipc_kobject_register_startup(IKOT_IOKIT_CONNECT)` (type29). **J3XNU027 is committed and CircleCI #13 PASSED on its first attempt.** It adds targeted diagnostic marks to the dispatcher and registration function, without bypassing checks. **J3XNU027's archive download, packaging and real-device photograph are still PENDING.** Not proof of iOS userland.
+**As of 2026-11-07:** J3XNU025 CircleCI #11 and J3XNU026 CircleCI #12 **compiled, packaged and physically tested**. J3XNU025 passed `_mig_init` and the first 20 Mach IPC callbacks. J3XNU026's 11:50:51 photo suggests callbacks **through zero-based index37 return**, but stage279 (callback index38 returned) is absent; stage281–287 end-of-phase markers are absent, and stage80 panic marker is lit. The user attached the **exact J3XNU026 archive**, verified `SHA256SUMS`, and its Mach-O sorted startup table unambiguously maps callback38 to `ipc_kobject_register_startup(IKOT_IOKIT_CONNECT)` (type29). **J3XNU027 is committed and CircleCI #13 PASSED on its first attempt.** It adds targeted diagnostic marks to the dispatcher and registration function, without bypassing checks. **User reports J3XNU027 download filename `j3y17lte-xnu-kernel (4).tgz`; packaging terminal output and physical photo remain PENDING.** Not proof of iOS userland.
 
 ## Canonical places and versions
 
 - GitHub repo: <https://github.com/imusingwinxp-ops/j3y17lte-xnu> (branch `main`).
 - Last verified **code** commit: `cd7908bcd6455fc99d84d16b20ffebab4fe7aabf` ("J3XNU027: trace IOKIT_CONNECT Mach IPC callback and preserve panic checks; update AGENT.md"). The patch and handoff were committed **atomically**.
-- Passing CI pipeline for that code: <https://circleci.com/gh/imusingwinxp-ops/j3y17lte-xnu/13> (**green / success on first attempt**). Download its `j3y17lte-xnu-kernel.tgz` artifact containing `kernel.development.j3y17lte` and `SHA256SUMS`; its eventual Windows `(N).tgz` download suffix is **not yet verified**. Historical J3XNU026 #12 archive was downloaded as `(3).tgz` and packaged successfully.
+- Passing CI pipeline for that code: <https://circleci.com/gh/imusingwinxp-ops/j3y17lte-xnu/13> (**green / success on first attempt**). Its `j3y17lte-xnu-kernel.tgz` artifact should contain `kernel.development.j3y17lte` and `SHA256SUMS`. **User confirms Windows filename `j3y17lte-xnu-kernel (4).tgz`**; file content/checksum and packaging have not yet been confirmed. Historical J3XNU026 #12 archive was downloaded as `(3).tgz` and packaged successfully.
 - Latest committed patch: `xnu/patches/0133-j3y17lte-trace-iokit-connect-startup.patch`.
 - CI config: `.circleci/config.yml`. GitHub Actions was blocked by GitHub billing/spend-limit restrictions; use CircleCI instead.
 - Donor heritage: `orhunnx/ios-a5xelte`, itself related to `ios-sweet`; the user is adapting an Exynos/Samsung-oriented XNU port to **Exynos 7570**, not making a working iOS 16 port from scratch.
@@ -102,14 +102,14 @@ Do not assume callback index `i` maps to a specific C function merely by filesys
 
 ### J3XNU027 — next steps after CircleCI #13 success (NOT YET PERFORMED)
 
-1. Open <https://circleci.com/gh/imusingwinxp-ops/j3y17lte-xnu/13>, choose **Artifacts**, and download `j3y17lte-xnu-kernel.tgz`. Its local filename may be `j3y17lte-xnu-kernel (4).tgz` but **ASK THE USER, DO NOT ASSUME**: Windows renames colliding downloads. Keep old artifacts intact.
-2. After the exact downloaded filename is supplied, have the user run the following **single guarded** Kali/WSL packaging block, replacing only the placeholder filename between quotes. This produces version-specific files, refuses to overwrite existing outputs, verifies Mach-O and J3XNU027 marker strings, checks SHA256SUMS, and retains the Samsung trailer. It does **not** flash the phone.
+1. The user downloaded the #13 `j3y17lte-xnu-kernel.tgz` artifact. Their Windows browser saved it as **`j3y17lte-xnu-kernel (4).tgz`** (confirmed by user chat; file not yet independently inspected). Keep old artifacts intact.
+2. The user has been given the following **single guarded** Kali/WSL packaging block with the exact `(4).tgz` path. Await their terminal result. This produces version-specific files, refuses to overwrite existing outputs, verifies Mach-O and J3XNU027 marker strings, checks SHA256SUMS, and retains the Samsung trailer. It does **not** flash the phone. If a partial prior run left version-specific outputs, diagnose carefully rather than deleting anything silently.
 
 ```bash
 (
 set -euo pipefail
 cd ~/ios-j330fn
-ARCHIVE="/mnt/c/Users/BalJai/Downloads/REPLACE_WITH_EXACT_J3XNU027_ARCHIVE_FILENAME.tgz"
+ARCHIVE="/mnt/c/Users/BalJai/Downloads/j3y17lte-xnu-kernel (4).tgz"
 ART="$HOME/ios-j330fn/xnu-j3/artifacts/j3xnu027-circleci"
 test -s "$ARCHIVE"
 test ! -e "$ART"
@@ -205,4 +205,4 @@ Previous J3XNU022 packaging was successful with Mach-O SHA256 `ebeb0062732244c1c
 
 ## Immediate handoff sentence
 
-**J3XNU026 code commit `c52a3551...`, CircleCI #12 GREEN, Odin SHA256 `bf54693a955ee9a7c3481a31da02abe9765931b80bc4229ea5a01bfbea301d63`, physical photo and exact Mach-O attached. Callback index37 returned but index38 probably did not; Mach-O qsort confirms index38=`ipc_kobject_register_startup`, arg `_ipc_kobject_ops_IKOT_IOKIT_CONNECT` type29. J3XNU027 code+AGENT.md atomic commit `cd7908bcd6455fc99d84d16b20ffebab4fe7aabf` adds patch `0133` stages301–306 and311–315 at y536, locally preflight-verified, **CircleCI #13 GREEN on its FIRST TRY**. User's next task: download #13 archive (verify filename), run the guarded J3XNU027 WSL packaging instructions above, validate hashes and recovery-only package, carefully test on J330FN with recovery safeguards, then send a full-screen photo. NO NEW CI/build until this evidence arrives. Docs-only update: `[ci skip]`.**
+**J3XNU026 code commit `c52a3551...`, CircleCI #12 GREEN, Odin SHA256 `bf54693a955ee9a7c3481a31da02abe9765931b80bc4229ea5a01bfbea301d63`, physical photo and exact Mach-O attached. Callback index37 returned but index38 probably did not; Mach-O qsort confirms index38=`ipc_kobject_register_startup`, arg `_ipc_kobject_ops_IKOT_IOKIT_CONNECT` type29. J3XNU027 code+AGENT.md atomic commit `cd7908bcd6455fc99d84d16b20ffebab4fe7aabf` adds patch `0133` stages301–306 and311–315 at y536, locally preflight-verified, **CircleCI #13 GREEN on its FIRST TRY**. User downloaded #13 archive as `j3y17lte-xnu-kernel (4).tgz` and was given the guarded J3XNU027 WSL packaging block with this exact name. **Await user terminal output before flash.** After verifying hashes/recovery-only package, test on J330FN with recovery safeguards, then request a full-screen photo. NO NEW CI/build until this evidence arrives. Docs-only update: `[ci skip]`.**
