@@ -2,7 +2,7 @@
 
 **Read this entire file before changing anything.** This is a status handoff for the user's active Samsung Galaxy J3 (2017) / Exynos 7570 XNU bring-up. It is not proof that iOS boots. The user calls the phone "J3", refers to the project as "J3XNU", and prefers short, accurate, test-backed steps. The user has repeatedly incurred unnecessary CircleCI credits from failed patch preflights and is particularly concerned about avoiding another failed CI run.
 
-**As of 2026-11-06 at the end of the session:** J3XNU024 **successfully compiled and packaged on CircleCI pipeline #10**. The user's physical-phone photo for J3XNU024 **has NOT arrived yet**; they said they will send it the following morning. **Wait for that photo and the packaging result before designing J3XNU025.** Do not infer further runtime progress from CI success alone.
+**As of 2026-11-07:** J3XNU024 **successfully compiled and packaged on CircleCI pipeline #10**, and the user **has supplied its physical-phone photo**. The photo proves the first **15 Mach IPC startup callbacks return**, while the **16th callback (zero-based index 15) enters and passes startup logging but never returns**. **Do not design or push J3XNU025 based on a guessed callback name.** First identify that specific function using the compiled J3XNU024 Mach-O startup-entry table / symbols or another justified means. The user's local packaging terminal output has not been separately supplied; the actual J3XNU024 phone photo confirms the image was flashed/tested.
 
 ## Canonical places and versions
 
@@ -22,9 +22,11 @@
 2. J3XNU021 added scheduler checkpoints stages 111–120. The phone reached stage 111 but stopped at an early scheduler `kprintf`.
 3. J3XNU022 bypassed J3-only informational scheduler logging and reached stages 111–117 but not 118. This pointed toward `SCHED(init)` / timeshare initialisation.
 4. J3XNU023 patch `0129-j3y17lte-trace-timeshare-init.patch` traced `sched_timeshare_init()` and bypassed two informational `printf` calls **only for J3**. Its phone photo showed stages **121–128 all reached** and also stages **107** (`sched_init` returned) and **108** (MAC policy phase passed), but **no 109** (`kernel_startup_initialize_upto(STARTUP_SUB_MACH_IPC)` returned). This is the crucial last physical observation.
-5. J3XNU024 patch `0130` adds three marker rows around **each** MACH_IPC startup callback (up to 20 callbacks). It compiles and has a green pipeline #10, but has not yet been confirmed to execute on physical hardware. **The next task is interpreting the new phone photo**, not guessing more fixes.
+5. J3XNU024 patch `0130` adds three marker rows around **each** MACH_IPC startup callback (up to 20 callbacks). It compiles, has a green pipeline #10, and its real-device photo was supplied on 2026-11-07. **Indices 0 through 14 all entered, logged and returned. Index 15 entered and logged but did not return.** Pixel samples of the photo confirm that row 181–200 at screen photo y≈1318 has 15 occupied columns; row 161–180 at photo y≈1338 has 16; row 141–160 at photo y≈1358 has 16. Thus stages **156 and 176 are present, 196 is missing**. Do not confuse this with callback 15 when using one-based numbering: it is the **16th**.
 
-Past J3XNU023 photo is in the prior ChatGPT conversation and may need to be reattached. Do not pretend you can see it in the GitHub repository.
+Past J3XNU023 and J3XNU024 photos are in the prior ChatGPT conversation and may need to be reattached. Do not pretend you can see them in the GitHub repository.
+
+**Why the function name is unresolved:** Apple XNU 8796 has at least eight direct `STARTUP(MACH_IPC,...)` registrations in `osfmk`, but `osfmk/kern/ipc_kobject.h` defines an `IPC_KOBJECT_DEFINE` macro that itself expands to `STARTUP_ARG(MACH_IPC, STARTUP_RANK_FIRST, ipc_kobject_register_startup, &ipc_kobject_ops_...)`. Those macro-generated registrations explain why counting only explicit `STARTUP(MACH_IPC,...)` lines severely undercounts callbacks. Several callbacks have the same function pointer `ipc_kobject_register_startup` and differ by `cur->arg`. Startup entries are sorted by subsystem/rank in `osfmk/kern/startup.c`; same-rank linker ordering cannot safely be guessed from source filenames. The best next step is to inspect the **J3XNU024 raw Mach-O kernel** (from CircleCI artifact `j3y17lte-xnu-kernel.tgz` or user's local `kernel.development.j3y17lte`) to reconstruct the `__init_entry_set` data and match callback index 15 to function/argument/symbols. Ask the user to attach their existing `.tgz` if necessary—this avoids another CI run.
 
 ## Exact colour-marker encoding (critical!)
 
@@ -68,13 +70,12 @@ Do not assume callback index `i` maps to a specific C function merely by filesys
 
 ## Next session procedure
 
-1. Ask for or inspect the **J3XNU024 phone photo**, and, if available, the WSL terminal packaging output. Confirm the photo corresponds to J3XNU024, not an earlier image.
-2. Decode the **three newly added rows**, counting block **columns** from the left, and relate the first missing stage in each row to the same callback index.
-3. Give the user a brief, evidence-backed conclusion before editing. State any uncertainty from camera perspective or overlapping colours. Use image pixel sampling/cropping when helpful.
-4. Read latest GitHub main and **all relevant existing patches**, especially `0118`, `0120`, `0121`, `0124`, `0125`, `0127`–`0130`, plus `.circleci/config.yml`, **before** planning a new patch.
-5. Diagnose the actual specific failing function/logging path. Prefer targeted diagnostics or narrow J3-only fixes. **Do not bypass core IPC, scheduler, VM, or security initialisation blindly.** Do not claim boot progress past what the phone displays.
-6. Only when the diagnosis warrants it, create **one** well-tested new patch (likely `0131-....patch`), with a single remote commit and the correct CI assertions. Let CircleCI run exactly once if possible.
-7. Upon green CI, instruct user to download the new artifact, verify `SHA256SUMS`, verify Mach-O arm64 and **version-specific embedded strings**, then package a **newly versioned recovery image** using their established scripts. Avoid overwriting earlier packages.
+1. Current photo has been decoded: callback index **15** reaches stage **176** but not **196**; source-level diagnosis is now the blocker, not image interpretation.
+2. Obtain the **J3XNU024 raw Mach-O kernel** from the already built artifact, preferably ask user to attach `j3y17lte-xnu-kernel (1).tgz` from Windows Downloads. Verify `SHA256SUMS` and `J3XNU024` strings before analyzing. Decode Mach-O section `__init_entry_set` and symbol addresses to map sorted entry index 15 to function and potentially `cur->arg`. Take care that `startup_entry_cur` may already be past earlier startup phases.
+3. Read latest GitHub main and **all relevant existing patches**, especially `0118`, `0120`, `0121`, `0124`, `0125`, `0127`–`0130`, plus `.circleci/config.yml`, **before** planning a new patch.
+4. Diagnose the specific failing function. Prefer targeted diagnostics or narrow J3-only fixes. **Do not bypass core IPC, scheduler, VM, or security initialisation blindly.** Do not claim boot progress past what the phone displays.
+5. Only when the diagnosis warrants it, create **one** well-tested new patch (likely `0131-....patch`), **update this AGENT.md in the same atomic commit**, and ensure CI assertions are correct. Let CircleCI run exactly once if possible.
+6. Upon green CI, instruct user to download the new artifact, verify `SHA256SUMS`, verify Mach-O arm64 and **version-specific embedded strings**, then package a **newly versioned recovery image** using their established scripts. Avoid overwriting earlier packages.
 
 ## Stop wasting CI credits: required edit/preflight discipline
 
@@ -84,7 +85,7 @@ Do not assume callback index `i` maps to a specific C function merely by filesys
 - Check the **entire** `.circleci/config.yml` for version-specific assertions: past problem was a `grep` requiring `stage > 120` even after expanding the stage cap. That grep was fixed in a later commit to accept changing limits. Current CI still checks stage 121 and 128 in `sched_prim.c` and `marker_stage = stage - 121;` in `sweet_early.c`. If intentionally changing those, update checks in the **same atomic code commit**.
 - The XNU compilation succeeds using CircleCI macOS with its pinned dependency/toolchain. A successful local patch check alone is **not** proof of a successful ARM64 compile; check CircleCI status and uploaded `kernel.development.j3y17lte` + archive.
 - A GitHub documentation-only commit should use **`[ci skip]`** in the commit message to avoid unnecessary builds. CircleCI officially documents this feature: <https://circleci.com/docs/guides/orchestrate/skip-build/>. Do not tag a genuine code-change commit `[ci skip]` when the user actually needs a compiled artifact.
-- Do not make repeated commits to `main` one file at a time when one atomic commit could handle the patch plus config change.
+- Do not make repeated commits to `main` one file at a time when one atomic commit could handle the patch plus config change **and the user's newly requested AGENT.md update**. **Every code change must have an up-to-date AGENT.md in the same commit**.
 - Use GitHub connector tools if configured; do not use expensive CI to validate whether a patch applies.
 - Never force-push or rewrite the user's history to resolve an incidental issue.
 
@@ -107,7 +108,7 @@ It then:
 5. Validates the final 16 bytes are exactly `SEANDROIDENFORCE`.
 6. Copies the generated recovery to `out/j3xnu024/recovery.img`; creates an Odin tar with the member **`recovery.img`**; validates `tar -tf` and SHA256; copies to Windows Downloads as **`recovery-j3xnu024-odin.tar`**.
 
-**Packaging success has not yet been confirmed by the user**. A pipeline-success icon is not a flash-success icon. These are experimental recovery-partition images, and Odin flashing risks a device boot loop, lost recovery, or worse. Confirm the exact handset variant and bootloader state, keep original recovery and a recovery route, and avoid flashing any primary bootloader/partition outside the tested scope. Do not ask the user to flash if validation failed. There is no complete iOS 16 userland boot yet.
+**The packaging terminal output was not separately provided, although the subsequent actual-device J3XNU024 photo shows the firmware did run.** These are experimental recovery-partition images, and Odin flashing risks a device boot loop, lost recovery, or worse. Confirm the exact handset variant and bootloader state, keep original recovery and a recovery route, and avoid flashing any primary bootloader/partition outside the tested scope. Do not ask the user to flash if validation failed. There is no complete iOS 16 userland boot yet.
 
 Previous J3XNU022 packaging was successful with Mach-O SHA256 `ebeb0062732244c1cb5d82621c0f5f26d6c7184d8a87ff914fa9ba2c3de99b45`; do **not** reuse it. Previous J3XNU021 SHA256 was `2fd00177578a4d06f86fcd995403d8eab2adbb4a5c2e7d41ab4a17af0ba211e3`. Neither is the new J3XNU024.
 
@@ -121,4 +122,4 @@ Previous J3XNU022 packaging was successful with Mach-O SHA256 `ebeb0062732244c1c
 
 ## Immediate handoff sentence
 
-**We have a green J3XNU024 kernel on CircleCI (#10), with its Odin recovery package being prepared locally. Await Düd's morning J3XNU024 phone photo, decode stages 141–200 in the correct top-to-bottom row order (returns / logging / entry), identify the first failing Mach IPC callback or preceding stage, then make one carefully preflighted, targeted patch—not another speculative CI build.**
+**We have a green J3XNU024 kernel on CircleCI (#10), physically tested. The photo proves Mach IPC startup callbacks 0–14 returned; callback index 15 (the 16th) entered and its logging returned, but its function did not (stage 196 missing). Inspect the existing J3XNU024 Mach-O kernel to identify the exact runtime startup entry, including macro-generated `IPC_KOBJECT_DEFINE` registrations, BEFORE pushing another patch. Every future code-change commit must simultaneously update AGENT.md.**
