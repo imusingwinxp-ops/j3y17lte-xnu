@@ -36,7 +36,7 @@ jobs:
             # invocation builds Apple-oriented arm64e/host slices; on Cortex-A53
             # that allowed FEAT_LSE instructions such as LDADD into the final kernel.
             # Build the firehose archive as plain ARM64 with explicit A53 codegen.
-            python3 - <<'PY'
+            python3 - \<<'PY'
             from pathlib import Path
             p = Path("dxb/build.sh")
             text = p.read_text()
