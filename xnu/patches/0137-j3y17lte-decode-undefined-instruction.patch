@@ -1,0 +1,76 @@
+diff --git a/osfmk/arm64/sweet_early.c b/osfmk/arm64/sweet_early.c
+index 2a93082..146da9f 100644
+--- a/osfmk/arm64/sweet_early.c
++++ b/osfmk/arm64/sweet_early.c
+@@ -35,6 +35,71 @@ sweet_early_panic(const char *fmt, va_list *args)
+ 		sweet_early_mark(362, "J3XNU030 panic format signature completed");
+ 	}
+ 
++	/*
++	 * J3XNU031: the J3XNU030 barcode identifies this as XNU's
++	 * "Undefined kernel instruction" panic. Decode only that exact
++	 * format's first two varargs: the faulting PC (%p) and instruction
++	 * word (%x). Paint each hexadecimal nibble as four bits, MSB first.
++	 *
++	 * PC:    16 nibbles at x=96..599, y=250..285.
++	 * instr:  8 nibbles at x=96..343, y=300..335.
++	 * Cyan means 1; red means 0. No exception is suppressed.
++	 */
++	if (!early_disabled && fmt != 0 && args != 0) {
++		static const char undefined_prefix[] = "Undefined kernel instruction";
++		unsigned int matches = 1u;
++
++		for (unsigned int i = 0; i < sizeof(undefined_prefix) - 1u; i++) {
++			if (fmt[i] != undefined_prefix[i]) {
++				matches = 0u;
++				break;
++			}
++		}
++
++		if (matches) {
++			va_list copy;
++			va_copy(copy, *args);
++			uintptr_t pc = (uintptr_t)va_arg(copy, void *);
++			uint32_t instr = (uint32_t)va_arg(copy, unsigned int);
++			va_end(copy);
++
++			sweet_early_mark(363, "J3XNU031 undefined instruction args captured");
++
++			for (unsigned int i = 0; i < 16u; i++) {
++				unsigned int nibble = (unsigned int)((pc >> ((15u - i) * 4u)) & 0xfu);
++				for (unsigned int bit = 0; bit < 4u; bit++) {
++					uint32_t colour = (nibble & (1u << (3u - bit))) ?
++					    0xff00ffffu : 0xffff2040u;
++					for (unsigned int dy = 0; dy < 6u; dy++) {
++						volatile uint32_t *row = early_fb +
++						    (250u + bit * 10u + dy) * J3_EARLY_STRIDE_PIXELS;
++						for (unsigned int dx = 0; dx < J3_MARK_W; dx++) {
++							row[96u + i * J3_MARK_STEP + dx] = colour;
++						}
++					}
++				}
++			}
++
++			for (unsigned int i = 0; i < 8u; i++) {
++				unsigned int nibble = (instr >> ((7u - i) * 4u)) & 0xfu;
++				for (unsigned int bit = 0; bit < 4u; bit++) {
++					uint32_t colour = (nibble & (1u << (3u - bit))) ?
++					    0xff00ffffu : 0xffff2040u;
++					for (unsigned int dy = 0; dy < 6u; dy++) {
++						volatile uint32_t *row = early_fb +
++						    (300u + bit * 10u + dy) * J3_EARLY_STRIDE_PIXELS;
++						for (unsigned int dx = 0; dx < J3_MARK_W; dx++) {
++							row[96u + i * J3_MARK_STEP + dx] = colour;
++						}
++					}
++				}
++			}
++
++			__asm__ volatile("dsb sy" ::: "memory");
++			sweet_early_mark(364, "J3XNU031 undefined instruction args painted");
++		}
++	}
++
+ 	/*
+ 	 * Stage 80 is reserved as the unambiguous panic indicator.
+ 	 */
