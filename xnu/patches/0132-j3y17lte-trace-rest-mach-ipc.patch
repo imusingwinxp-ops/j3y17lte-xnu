@@ -1,0 +1,83 @@
+diff --git a/osfmk/arm64/sweet_early.c b/osfmk/arm64/sweet_early.c
+index f95d4f7..68fdd32 100644
+--- a/osfmk/arm64/sweet_early.c
++++ b/osfmk/arm64/sweet_early.c
+@@ -38,7 +38,7 @@ sweet_early_mark(unsigned int stage, const char *label)
+ {
+ 	(void)label;
+ 
+-	if (early_disabled || stage > 260) {
++	if (early_disabled || stage > 300) {
+ 		return;
+ 	}
+ 
+@@ -108,10 +108,18 @@ sweet_early_mark(unsigned int stage, const char *label)
+ 		/* J3XNU025: MIG subsystem processing started. */
+ 		marker_stage = stage - 221;
+ 		marker_y = 584u;
+-	} else {
++	} else if (stage <= 260) {
+ 		/* J3XNU025: MIG subsystem processing returned. */
+ 		marker_stage = stage - 241;
+ 		marker_y = 572u;
++	} else if (stage <= 280) {
++		/* J3XNU026: Mach IPC callback indices 20..39 returned. */
++		marker_stage = stage - 261;
++		marker_y = 560u;
++	} else {
++		/* J3XNU026: callbacks 40..42 and final exit markers. */
++		marker_stage = stage - 281;
++		marker_y = 548u;
+ 	}
+ 
+ 	unsigned int x0 = marker_stage * J3_MARK_STEP;
+diff --git a/osfmk/kern/startup.c b/osfmk/kern/startup.c
+index 610b413..104f961 100644
+--- a/osfmk/kern/startup.c
++++ b/osfmk/kern/startup.c
+@@ -484,19 +484,45 @@ kernel_startup_initialize_upto(startup_subsystem_id_t upto)
+ 			if (j3_mach_ipc_callback_index < 20u) {
+ 				sweet_early_mark(181u + j3_mach_ipc_callback_index,
+ 				    "J3XNU024 Mach IPC initializer returned");
++			} else if (j3_mach_ipc_callback_index < 40u) {
++				sweet_early_mark(261u + j3_mach_ipc_callback_index - 20u,
++				    "J3XNU026 Mach IPC callback 20-39 returned");
++			} else if (j3_mach_ipc_callback_index < 43u) {
++				sweet_early_mark(281u + j3_mach_ipc_callback_index - 40u,
++				    "J3XNU026 Mach IPC callback 40-42 returned");
+ 			}
+ 			j3_mach_ipc_callback_index++;
+ 		}
+ #endif
+ 		startup_entry_cur = ++cur;
+ 	}
++#if defined(J3Y17LTE)
++	if (upto == STARTUP_SUB_MACH_IPC) {
++		sweet_early_mark(284, "J3XNU026 MACH_IPC callback loop completed");
++	}
++#endif
+ 	kernel_startup_log(upto);
++#if defined(J3Y17LTE)
++	if (upto == STARTUP_SUB_MACH_IPC) {
++		sweet_early_mark(285, "J3XNU026 final MACH_IPC log returned");
++	}
++#endif
+ 
+ 	if ((startup_debug & STARTUP_DEBUG_VERBOSE) &&
+ 	    upto >= STARTUP_SUB_KPRINTF) {
+ 		kprintf("%s: reached phase %d\n", __func__, upto);
+ 	}
++#if defined(J3Y17LTE)
++	if (upto == STARTUP_SUB_MACH_IPC) {
++		sweet_early_mark(286, "J3XNU026 final MACH_IPC kprintf passed");
++	}
++#endif
+ 	startup_phase = upto;
++#if defined(J3Y17LTE)
++	if (upto == STARTUP_SUB_MACH_IPC) {
++		sweet_early_mark(287, "J3XNU026 MACH_IPC initializer returning");
++	}
++#endif
+ }
+ 
+ void
