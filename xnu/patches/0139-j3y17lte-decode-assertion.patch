@@ -1,0 +1,103 @@
+diff --git a/osfmk/arm64/sweet_early.c b/osfmk/arm64/sweet_early.c
+--- a/osfmk/arm64/sweet_early.c
++++ b/osfmk/arm64/sweet_early.c
+@@ -1,6 +1,99 @@
+ 			sweet_early_mark(364, "J3XNU031 undefined instruction args painted");
+ 		}
+ 	}
++	/*
++	 * J3XNU034: decode the common XNU assertion panic
++	 * "%s:%d Assertion failed: %s". Capture its first three varargs:
++	 * source filename, source line and failed expression.
++	 *
++	 * file:       first 16 bytes at x=96..599, y=90..165.
++	 * expression: first 16 bytes at x=96..599, y=180..255.
++	 * line:       8 hexadecimal nibbles at x=96..343, y=270..305.
++	 *
++	 * String bytes use the same 8-bit cyan/red encoding as J3XNU030.
++	 * No assertion is bypassed and no panic state is modified.
++	 */
++	if (!early_disabled && fmt != 0 && args != 0) {
++		static const char assertion_prefix[] = "%s:%d Assertion ";
++		unsigned int matches = 1u;
++
++		for (unsigned int i = 0; i < sizeof(assertion_prefix) - 1u; i++) {
++			if (fmt[i] != assertion_prefix[i]) {
++				matches = 0u;
++				break;
++			}
++		}
++
++		if (matches) {
++			va_list copy;
++			va_copy(copy, *args);
++			const char *file = va_arg(copy, const char *);
++			unsigned int line = (unsigned int)va_arg(copy, int);
++			const char *expression = va_arg(copy, const char *);
++			va_end(copy);
++
++			sweet_early_mark(365, "J3XNU034 assertion args captured");
++
++			if (file != 0) {
++				for (unsigned int i = 0; i < 16u; i++) {
++					unsigned char ch = (unsigned char)file[i];
++					if (ch == 0u) {
++						break;
++					}
++					for (unsigned int bit = 0; bit < 8u; bit++) {
++						uint32_t colour = (ch & (1u << (7u - bit))) ?
++						    0xff00ffffu : 0xffff2040u;
++						for (unsigned int dy = 0; dy < 6u; dy++) {
++							volatile uint32_t *row = early_fb +
++							    (90u + bit * 10u + dy) * J3_EARLY_STRIDE_PIXELS;
++							for (unsigned int dx = 0; dx < J3_MARK_W; dx++) {
++								row[96u + i * J3_MARK_STEP + dx] = colour;
++							}
++						}
++					}
++				}
++			}
++
++			if (expression != 0) {
++				for (unsigned int i = 0; i < 16u; i++) {
++					unsigned char ch = (unsigned char)expression[i];
++					if (ch == 0u) {
++						break;
++					}
++					for (unsigned int bit = 0; bit < 8u; bit++) {
++						uint32_t colour = (ch & (1u << (7u - bit))) ?
++						    0xff00ffffu : 0xffff2040u;
++						for (unsigned int dy = 0; dy < 6u; dy++) {
++							volatile uint32_t *row = early_fb +
++							    (180u + bit * 10u + dy) * J3_EARLY_STRIDE_PIXELS;
++							for (unsigned int dx = 0; dx < J3_MARK_W; dx++) {
++								row[96u + i * J3_MARK_STEP + dx] = colour;
++							}
++						}
++					}
++				}
++			}
++
++			for (unsigned int i = 0; i < 8u; i++) {
++				unsigned int nibble = (line >> ((7u - i) * 4u)) & 0xfu;
++				for (unsigned int bit = 0; bit < 4u; bit++) {
++					uint32_t colour = (nibble & (1u << (3u - bit))) ?
++					    0xff00ffffu : 0xffff2040u;
++					for (unsigned int dy = 0; dy < 6u; dy++) {
++						volatile uint32_t *row = early_fb +
++						    (270u + bit * 10u + dy) * J3_EARLY_STRIDE_PIXELS;
++						for (unsigned int dx = 0; dx < J3_MARK_W; dx++) {
++							row[96u + i * J3_MARK_STEP + dx] = colour;
++						}
++					}
++				}
++			}
++
++			__asm__ volatile("dsb sy" ::: "memory");
++			sweet_early_mark(366, "J3XNU034 assertion args painted");
++		}
++	}
++
+ 
+ 	/*
+ 	 * Stage 80 is reserved as the unambiguous panic indicator.
