@@ -1,11 +1,12 @@
 diff --git a/osfmk/arm64/sweet_early.c b/osfmk/arm64/sweet_early.c
 --- a/osfmk/arm64/sweet_early.c
 +++ b/osfmk/arm64/sweet_early.c
-@@ -1,6 +1,99 @@
+@@ -2,7 +2,100 @@
  			sweet_early_mark(364, "J3XNU031 undefined instruction args painted");
  		}
  	}
-+	/*
+ 
+ 	/*
 +	 * J3XNU034: decode the common XNU assertion panic
 +	 * "%s:%d Assertion failed: %s". Capture its first three varargs:
 +	 * source filename, source line and failed expression.
@@ -98,6 +99,6 @@ diff --git a/osfmk/arm64/sweet_early.c b/osfmk/arm64/sweet_early.c
 +		}
 +	}
 +
- 
- 	/*
++	/*
  	 * Stage 80 is reserved as the unambiguous panic indicator.
+ 	 */
