@@ -2,14 +2,14 @@
 
 **Read this entire file before changing anything.** This is a status handoff for the user's active Samsung Galaxy J3 (2017) / Exynos 7570 XNU bring-up. It is not proof that iOS boots. The user calls the phone "J3", refers to the project as "J3XNU", and prefers short, accurate, test-backed steps. The user has repeatedly incurred unnecessary CircleCI credits from failed patch preflights and is particularly concerned about avoiding another failed CI run.
 
-**As of 2026-11-07:** J3XNU025 CircleCI #11 and J3XNU026 CircleCI #12 **compiled, packaged and physically tested**. J3XNU025 passed `_mig_init` and the first 20 Mach IPC callbacks. J3XNU026's 11:50:51 photo suggests callbacks **through zero-based index37 return**, but stage279 (callback index38 returned) is absent; stage281–287 end-of-phase markers are absent, and stage80 panic marker is lit. The user attached the **exact J3XNU026 archive**, verified `SHA256SUMS`, and its Mach-O sorted startup table unambiguously maps callback38 to `ipc_kobject_register_startup(IKOT_IOKIT_CONNECT)` (type29). The proposed next patch **J3XNU027** instruments the dispatcher and registration function without bypassing IPC checks; it has passed local `git apply --check --whitespace=error`. Not proof of iOS userland.
+**As of 2026-11-07:** J3XNU025 CircleCI #11 and J3XNU026 CircleCI #12 **compiled, packaged and physically tested**. J3XNU025 passed `_mig_init` and the first 20 Mach IPC callbacks. J3XNU026's 11:50:51 photo suggests callbacks **through zero-based index37 return**, but stage279 (callback index38 returned) is absent; stage281–287 end-of-phase markers are absent, and stage80 panic marker is lit. The user attached the **exact J3XNU026 archive**, verified `SHA256SUMS`, and its Mach-O sorted startup table unambiguously maps callback38 to `ipc_kobject_register_startup(IKOT_IOKIT_CONNECT)` (type29). **J3XNU027 is committed and CircleCI #13 PASSED on its first attempt.** It adds targeted diagnostic marks to the dispatcher and registration function, without bypassing checks. **J3XNU027's archive download, packaging and real-device photograph are still PENDING.** Not proof of iOS userland.
 
 ## Canonical places and versions
 
 - GitHub repo: <https://github.com/imusingwinxp-ops/j3y17lte-xnu> (branch `main`).
-- Last verified **code** commit: `c52a3551f4ba491bf377e76def9f987bc0a52ea0` ("J3XNU026: trace remaining Mach IPC callbacks and phase exit; update AGENT.md").
-- Passing CI pipeline for that code: <https://circleci.com/gh/imusingwinxp-ops/j3y17lte-xnu/12> (green / success). Artifact in its **Artifacts** tab: `j3y17lte-xnu-kernel.tgz`, containing `kernel.development.j3y17lte` and `SHA256SUMS`. User downloaded J3XNU026 as `j3y17lte-xnu-kernel (3).tgz` and verified/packaged it successfully.
-- Latest committed patch: `xnu/patches/0132-j3y17lte-trace-rest-mach-ipc.patch`.
+- Last verified **code** commit: `cd7908bcd6455fc99d84d16b20ffebab4fe7aabf` ("J3XNU027: trace IOKIT_CONNECT Mach IPC callback and preserve panic checks; update AGENT.md"). The patch and handoff were committed **atomically**.
+- Passing CI pipeline for that code: <https://circleci.com/gh/imusingwinxp-ops/j3y17lte-xnu/13> (**green / success on first attempt**). Download its `j3y17lte-xnu-kernel.tgz` artifact containing `kernel.development.j3y17lte` and `SHA256SUMS`; its eventual Windows `(N).tgz` download suffix is **not yet verified**. Historical J3XNU026 #12 archive was downloaded as `(3).tgz` and packaged successfully.
+- Latest committed patch: `xnu/patches/0133-j3y17lte-trace-iokit-connect-startup.patch`.
 - CI config: `.circleci/config.yml`. GitHub Actions was blocked by GitHub billing/spend-limit restrictions; use CircleCI instead.
 - Donor heritage: `orhunnx/ios-a5xelte`, itself related to `ios-sweet`; the user is adapting an Exynos/Samsung-oriented XNU port to **Exynos 7570**, not making a working iOS 16 port from scratch.
 - XNU base: Apple `apple-oss-distributions/xnu`, tag/branch `rel/xnu-8796` (XNU 8796, iOS 16-era).
@@ -25,10 +25,10 @@
 5. J3XNU024 patch `0130` adds three marker rows around **each** MACH_IPC startup callback (up to 20 callbacks). It compiles, has a green pipeline #10, and its real-device photo was supplied on 2026-11-07. **Indices 0 through 14 all entered, logged and returned. Index 15 entered and logged but did not return.** Pixel samples of the photo confirm that row 181–200 at screen photo y≈1318 has 15 occupied columns; row 161–180 at photo y≈1338 has 16; row 141–160 at photo y≈1358 has 16. Thus stages **156 and 176 are present, 196 is missing**. Do not confuse this with callback 15 when using one-based numbering: it is the **16th**.
 6. The user attached **J3XNU024 Mach-O archive**. Verified SHA256 `808ba33e1f3655f9772eb6b1fe69395f06226ea4719bb0d76711ab0e71304f23`. Parsed `__BOOTDATA,__init_entry_set` and used the original Apple XNU `qsort` implementation in a local reference shared library to reconstruct the exact sorted startup table: 4069 entries, **43** MACH_IPC entries; callback **index15 is `_mig_init`**. The Apple file is `osfmk/kern/ipc_kobject.c`.
 7. J3XNU025 patch `0131` adds per-MIG-subsystem and milestone markers and suppresses two J3-only informational MIG `printf` statements. CI #11 green, packaging hashes below. On the physical photo (2026-11-07 11:23), **201–207 are lit, MIG subsystem 0–18 all entered and completed** (19 subsystems; stage256 is almost black **by design**, not necessarily missing), and **all 20 callbacks 0–19 returned**, including stage200. This was confirmed by sampling the rightmost marker rectangle at image coordinates x≈1125, y≈1039–1052, where stage200's teal appears. **Do not misread a horizontally level sample across the photo**: photographed rows slope a few pixels between left and right. Stage80's orange/pink panic marker appears lit. There is no stage109 evidence yet, suggesting a later MACH_IPC callback or final phase logging still stalls. The supplied MP4 is ~19.7s and shows markers static after early moments.
-8. J3XNU026 (committed patch `0132`) adds **two rows only** for completed callbacks 20–39 (stages261–280, framebuffer y560) and callbacks40–42 (stages281–283, y548). Stages284–287 mark the end of callback loop, final `kernel_startup_log(upto)`, final verbose `kprintf`, and function return. `sweet_early_mark` stage cap increases to 300. Patch was locally applied on an XNU preflight tree already including 0131, regenerated via `git diff --no-index`, and validated by `git apply --check --verbose --whitespace=error` on the pristine preflight copy. **CI pipeline #12 passed** with code commit `c52a3551f4ba491bf377e76def9f987bc0a52ea0` (one attempt only). Next: download and verify archive, package J3XNU026 recovery, and request a new phone photo.
-9. J3XNU026 **physical photo received**: `WhatsApp Image 2026-11-07 at 11.50.51.jpeg` (1512×2016), colour markers extending under/over the "Galaxy J3" text. Examined a high-resolution crop and original photo pixel samples. At marker column17 (image x≈1200), two distinguishable rectangles: green around y1183–1199 (J3XNU025 stage258) and purple around y1204–1219 (J3XNU026 **stage278**, callback index37 returned). At column18 (x≈1254), rectangles appear red around y1182–1199 (stage259, MIG finish), then yellow-green around y1203–1219 (stage239, MIG entered); **no peach-coloured stage279** (callback index38 returned). At column19 (x≈1310), there are no top-row stage280 return markers. Stage281–287 (callbacks40–42 and loop exit) also appear absent. Screen framebuffer mapping and photo perspective make the on-screen order of individual row colours nontrivial; identify markers using **stage-specific RGB colours and column**, not a rigid horizontal scan. Thus last proven completion is likely **callback index37**, and first nonreturning is **index38**. The J3XNU024 startup table maps index38 to `_ipc_kobject_register_startup` with arg `_ipc_kobject_ops_IKOT_IOKIT_CONNECT` (type29), but linker layout could differ in J3XNU026. **Do not patch this function on a guess.** Ask user to attach their already downloaded `j3y17lte-xnu-kernel (3).tgz` so the exact J3XNU026 startup table can be decoded offline, without another CI run. Also distinguish stalling in verbose logging from a callback body (next instrumentation may need before-log/after-log/pre-call/inside-call markers).
+8. J3XNU026 (committed patch `0132`) adds **two rows only** for completed callbacks 20–39 (stages261–280, framebuffer y560) and callbacks40–42 (stages281–283, y548). Stages284–287 mark the end of callback loop, final `kernel_startup_log(upto)`, final verbose `kprintf`, and function return. `sweet_early_mark` stage cap increases to 300. Patch was locally applied on an XNU preflight tree already including 0131, regenerated via `git diff --no-index`, and validated by `git apply --check --verbose --whitespace=error` on the pristine preflight copy. **CI pipeline #12 passed** with code commit `c52a3551f4ba491bf377e76def9f987bc0a52ea0` (one attempt only). Archive verification, packaging and physical photo were subsequently completed; see steps 9–10.
+9. J3XNU026 **physical photo received**: `WhatsApp Image 2026-11-07 at 11.50.51.jpeg` (1512×2016), colour markers extending under/over the "Galaxy J3" text. Examined a high-resolution crop and original photo pixel samples. At marker column17 (image x≈1200), two distinguishable rectangles: green around y1183–1199 (J3XNU025 stage258) and purple around y1204–1219 (J3XNU026 **stage278**, callback index37 returned). At column18 (x≈1254), rectangles appear red around y1182–1199 (stage259, MIG finish), then yellow-green around y1203–1219 (stage239, MIG entered); **no peach-coloured stage279** (callback index38 returned). At column19 (x≈1310), there are no top-row stage280 return markers. Stage281–287 (callbacks40–42 and loop exit) also appear absent. Screen framebuffer mapping and photo perspective make the on-screen order of individual row colours nontrivial; identify markers using **stage-specific RGB colours and column**, not a rigid horizontal scan. Thus last proven completion is likely **callback index37**, and first nonreturning is **index38**. The precise J3XNU026 archive and startup callback table **were subsequently received and analysed** (step10); old requests in earlier chat for that archive are satisfied.
 10. **J3XNU026 archive now attached and decoded.** `/workspace/scratch/efd2accecee5/upload/j3y17lte-xnu-kernel (3).tgz`: tar contains raw Mach-O and SHA256SUMS, `sha256sum -c` **OK**. Copied exact Apple XNU qsort reference helper and analyzer into scratch `j3xnu026_binary`; the Mach-O contains 4069 startup entries, **43** MACH_IPC callbacks with the same qsort order as J3XNU024. Relevant exact mappings: index37 -> `_ipc_kobject_register_startup`, arg `0xfffffff007c559b0` = `_ipc_kobject_ops_IKOT_IOKIT_OBJECT` (type30); index38 -> `_ipc_kobject_register_startup` at `0xfffffff007a480e0`, arg `0xfffffff007c559d0` = `_ipc_kobject_ops_IKOT_IOKIT_CONNECT` (type29); index39 -> same function, arg `0xfffffff007c559f0` = `_ipc_kobject_ops_IKOT_UEXT_OBJECT` (type41). **The callback identity is confirmed, not inferred.** The function in `osfmk/kern/ipc_kobject.c` performs a duplicate-type check then a struct copy to `ipc_kobject_ops_array` and returns; its body is too simple to assume the precise failure without targeted markers. Could hang in preceding verbose startup logging, phase log, duplicate check/panic, or memory copy. Do not bypass checks blindly.
-11. **J3XNU027 patch locally prepared:** `xnu/patches/0133-j3y17lte-trace-iokit-connect-startup.patch`. `sweet_early.c` cap 320 with **stage301–320 at framebuffer y536** (x=0..19, 8px high). `startup.c` marks stage301 dispatch idx38 entered, 302 verbose kprintf returned, 303 phase log returned, 304 imminent callback call, 305 callback body returned, and 306 cursor committed. `ipc_kobject.c` ONLY for `ops->iko_op_type == IKOT_IOKIT_CONNECT`: 311 entry, 312 duplicate check passed, 313 struct copy completed, 314 returning, **315 duplicate detected before original `panic`**. No core logic bypass. Patch was generated by editing the correctly previously-patched local XNU tree and using `git diff --no-index`, then verified with **`git apply --check --verbose --whitespace=error`** against untouched baseline copy. Three target files: `osfmk/arm64/sweet_early.c`, `osfmk/kern/startup.c`, `osfmk/kern/ipc_kobject.c`. **Next: atomic commit of patch AND AGENT.md, single CircleCI build.** Do not bypass or guess further.
+11. **J3XNU027 patch built successfully:** `xnu/patches/0133-j3y17lte-trace-iokit-connect-startup.patch`. `sweet_early.c` cap 320 with **stage301–320 at framebuffer y536** (x=0..19, 8px high). `startup.c` marks stage301 dispatch idx38 entered, 302 verbose kprintf returned, 303 phase log returned, 304 imminent callback call, 305 callback body returned, and 306 cursor committed. `ipc_kobject.c` ONLY for `ops->iko_op_type == IKOT_IOKIT_CONNECT`: 311 entry, 312 duplicate check passed, 313 struct copy completed, 314 returning, **315 duplicate detected before original `panic`**. No core logic bypass. Patch was generated by editing the correctly previously-patched local XNU tree and using `git diff --no-index`, then verified with **`git apply --check --verbose --whitespace=error`** against untouched baseline copy. Three target files: `osfmk/arm64/sweet_early.c`, `osfmk/kern/startup.c`, `osfmk/kern/ipc_kobject.c`. Code + AGENT.md atomically pushed as `cd7908b...`; **CircleCI #13 succeeded**; download, checksum-verify, version-package and physically test the archive next. Do not bypass or guess further.
 
 Past J3XNU023 and J3XNU024 photos are in the prior ChatGPT conversation and may need to be reattached. Do not pretend you can see them in the GitHub repository.
 
@@ -84,7 +84,7 @@ Do not assume callback index `i` maps to a specific C function merely by filesys
 
 1. J3XNU025 is **complete and physically tested**. Its photo demonstrates all MIG init steps and all 20 tracked MACH_IPC callbacks return. **Do not generate a second J3XNU025 build.**
 2. J3XNU026 patch `0132` is **already committed, CircleCI-green on pipeline #12, checksum-verified and Odin-packaged**; **do not rebuild or repack**. The package is in Windows Downloads as `recovery-j3xnu026-odin.tar` with tar hash documented below. Confirm correct J330FN handset, original recovery backup and a working Download Mode/Odin recovery path before any recovery-partition test. Do not write BOOT/BL/CP/CSC.
-3. **J3XNU026 photo and exact binary now both received and assessed.** Callback38 conclusively `_ipc_kobject_register_startup` for `IKOT_IOKIT_CONNECT`. Next diagnostic patch `0133` is written and locally preflight-clean; commit it **together with this AGENT.md in one atomic commit**. CI must run once, then user downloads archive and creates uniquely versioned `j3xnu027` recovery. Request new device photo; interpret stage301–306 and 311–315 to find precise failure. **Every new code change must include AGENT.md in the same atomic commit.**
+3. **J3XNU026 photo and exact binary now both received and assessed.** Callback38 conclusively `_ipc_kobject_register_startup` for `IKOT_IOKIT_CONNECT`. **J3XNU027 diagnostic patch `0133` is already committed, CI #13 GREEN**. Do not rebuild it. Ask the user to download the #13 archive, verify its **actual Windows filename**, and create a uniquely versioned `j3xnu027` recovery following the procedure below. Request the new phone photo after carefully verified recovery-only flashing; interpret stages301–306 and 311–315 to locate the precise failure. **Every new code change must include AGENT.md in the same atomic commit.**
 
 ## Stop wasting CI credits: required edit/preflight discipline
 
@@ -100,6 +100,59 @@ Do not assume callback index `i` maps to a specific C function merely by filesys
 
 ## User-side artifact, packaging and Odin workflow
 
+### J3XNU027 — next steps after CircleCI #13 success (NOT YET PERFORMED)
+
+1. Open <https://circleci.com/gh/imusingwinxp-ops/j3y17lte-xnu/13>, choose **Artifacts**, and download `j3y17lte-xnu-kernel.tgz`. Its local filename may be `j3y17lte-xnu-kernel (4).tgz` but **ASK THE USER, DO NOT ASSUME**: Windows renames colliding downloads. Keep old artifacts intact.
+2. After the exact downloaded filename is supplied, have the user run the following **single guarded** Kali/WSL packaging block, replacing only the placeholder filename between quotes. This produces version-specific files, refuses to overwrite existing outputs, verifies Mach-O and J3XNU027 marker strings, checks SHA256SUMS, and retains the Samsung trailer. It does **not** flash the phone.
+
+```bash
+(
+set -euo pipefail
+cd ~/ios-j330fn
+ARCHIVE="/mnt/c/Users/BalJai/Downloads/REPLACE_WITH_EXACT_J3XNU027_ARCHIVE_FILENAME.tgz"
+ART="$HOME/ios-j330fn/xnu-j3/artifacts/j3xnu027-circleci"
+test -s "$ARCHIVE"
+test ! -e "$ART"
+mkdir -p "$ART"
+tar -tzf "$ARCHIVE"
+tar -xzf "$ARCHIVE" -C "$ART"
+cd "$ART"
+sha256sum -c SHA256SUMS
+K27="$ART/kernel.development.j3y17lte"
+file "$K27" | grep -Eq 'Mach-O 64-bit.*arm64'
+strings "$K27" | grep -F 'J3XNU027 callback 38 dispatch entered'
+strings "$K27" | grep -F 'J3XNU027 IOKIT_CONNECT registration entered'
+strings "$K27" | grep -F 'J3XNU027 IOKIT_CONNECT duplicate registration'
+sha256sum "$K27"
+cd ~/ios-j330fn
+test ! -e tools/j3y17lte/j3xnu027.payload
+test ! -e recovery-j3xnu027.img
+test ! -e out/j3xnu027/recovery.img
+test ! -e out/j3xnu027/recovery-j3xnu027-odin.tar
+test ! -e /mnt/c/Users/BalJai/Downloads/recovery-j3xnu027-odin.tar
+python3 tools/j3y17lte/mkpayload_j3.py \
+  "$K27" tools/j3y17lte/j3y17lte-entry.adt \
+  tools/j3y17lte/j3xnu027.payload \
+  --cmdline 'debug=0xc cpus=1 keepsyms=1'
+python3 tools/repack-j3-xnu-recovery.py \
+  research/j3-recovery-work/recovery-apple.img \
+  loader/j3y17lte/outxnu/Image \
+  tools/j3y17lte/j3xnu027.payload recovery-j3xnu027.img
+test "$(tail -c 16 recovery-j3xnu027.img)" = "SEANDROIDENFORCE"
+sha256sum recovery-j3xnu027.img
+mkdir -p out/j3xnu027
+cp recovery-j3xnu027.img out/j3xnu027/recovery.img
+cd out/j3xnu027
+tar -cf recovery-j3xnu027-odin.tar recovery.img
+tar -tf recovery-j3xnu027-odin.tar
+sha256sum recovery.img recovery-j3xnu027-odin.tar
+cp recovery-j3xnu027-odin.tar /mnt/c/Users/BalJai/Downloads/
+echo 'SUCCESS: J3XNU027 Odin package ready — NOT FLASHED'
+)
+```
+
+3. Verify the output/hashes with user before any flash. The device is experimental: ensure exact SM-J330FN variant, preserved original recovery/stock firmware, working Download Mode and known recovery route. If all checks pass, user may choose to flash the recovery-only tar via Odin **AP**; never change BOOT/BL/CP/CSC in this experiment. Ask for a clear photo showing the full screen and if possible a brief video of the last changing markers. Compare colour positions for stages301–306 and 311–315 and distinguish panic stage315 from a post-copy stall. Stop and inspect physical evidence before creating J3XNU028 or using more CI credits.
+
 ### J3XNU026 packaging completed (user terminal log, 7 November 2026)
 
 User downloaded the CircleCI #12 artifact as `C:\Users\BalJai\Downloads\j3y17lte-xnu-kernel (3).tgz` and ran the WSL packaging sequence successfully with `set -euo pipefail`. Archive `SHA256SUMS` reported `kernel.development.j3y17lte: OK`, `file` reported `Mach-O 64-bit arm64 executable`, and `strings` found all three markers (`J3XNU026 Mach IPC callback 20-39 returned`, `J3XNU026 Mach IPC callback 40-42 returned`, `J3XNU026 MACH_IPC initializer returning`). Repacked image preserved `SEANDROIDENFORCE`, and Odin tar contains only `recovery.img`.
@@ -108,7 +161,7 @@ User downloaded the CircleCI #12 artifact as `C:\Users\BalJai\Downloads\j3y17lte
 - Recovery image SHA256: `3701ab13dd270c1b72f21fef91a4896697b782c07bc209ea01c4d78217c8416c`.
 - Odin tar SHA256: `bf54693a955ee9a7c3481a31da02abe9765931b80bc4229ea5a01bfbea301d63`.
 - User's Odin package: `C:\Users\BalJai\Downloads\recovery-j3xnu026-odin.tar`.
-- **Physical J3XNU026 boot result/photo is still PENDING.** Do not infer callback 20–42 progress until the user supplies the real-device photo or logs.
+- **Physical J3XNU026 boot/photo was received later** (step9): colourful diagnostics likely show callback37 returned but callback38 did not. J3XNU027 supersedes this test; its **physical photo is pending**.
 
 ### J3XNU025 packaging completed (user terminal log, 7 November 2026)
 
@@ -152,4 +205,4 @@ Previous J3XNU022 packaging was successful with Mach-O SHA256 `ebeb0062732244c1c
 
 ## Immediate handoff sentence
 
-**J3XNU026 code commit `c52a3551...`, CircleCI #12 GREEN, Odin SHA256 `bf54693a955ee9a7c3481a31da02abe9765931b80bc4229ea5a01bfbea301d63`, actual-phone photo and exact Mach-O attached. Image suggests callback index37 returned and index38 did not. Mach-O qsort confirms callback38=`ipc_kobject_register_startup`, arg `_ipc_kobject_ops_IKOT_IOKIT_CONNECT` type29. J3XNU027 `0133` trace patch (stages301–306 and311–315 at y536) is prepared and passes `git apply --check --whitespace=error` against full prior-patched XNU. Push one atomic patch+AGENT.md commit, run CI ONCE, then test real hardware before any new source fix.**
+**J3XNU026 code commit `c52a3551...`, CircleCI #12 GREEN, Odin SHA256 `bf54693a955ee9a7c3481a31da02abe9765931b80bc4229ea5a01bfbea301d63`, physical photo and exact Mach-O attached. Callback index37 returned but index38 probably did not; Mach-O qsort confirms index38=`ipc_kobject_register_startup`, arg `_ipc_kobject_ops_IKOT_IOKIT_CONNECT` type29. J3XNU027 code+AGENT.md atomic commit `cd7908bcd6455fc99d84d16b20ffebab4fe7aabf` adds patch `0133` stages301–306 and311–315 at y536, locally preflight-verified, **CircleCI #13 GREEN on its FIRST TRY**. User's next task: download #13 archive (verify filename), run the guarded J3XNU027 WSL packaging instructions above, validate hashes and recovery-only package, carefully test on J330FN with recovery safeguards, then send a full-screen photo. NO NEW CI/build until this evidence arrives. Docs-only update: `[ci skip]`.**
