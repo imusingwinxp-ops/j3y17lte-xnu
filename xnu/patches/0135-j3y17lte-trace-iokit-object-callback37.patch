@@ -1,0 +1,120 @@
+diff --git a/osfmk/arm64/sweet_early.c b/osfmk/arm64/sweet_early.c
+index 3356558..fb6a1ff 100644
+--- a/osfmk/arm64/sweet_early.c
++++ b/osfmk/arm64/sweet_early.c
+@@ -45,7 +45,7 @@ sweet_early_mark(unsigned int stage, const char *label)
+ {
+ 	(void)label;
+ 
+-	if (early_disabled || stage > 340) {
++	if (early_disabled || stage > 360) {
+ 		return;
+ 	}
+ 
+@@ -131,10 +131,14 @@ sweet_early_mark(unsigned int stage, const char *label)
+ 		/* J3XNU027: callback 38 and IOKIT_CONNECT registration. */
+ 		marker_stage = stage - 301;
+ 		marker_y = 536u;
+-	} else {
++	} else if (stage <= 340) {
+ 		/* J3XNU028: transition after MACH_IPC callback 37. */
+ 		marker_stage = stage - 321;
+ 		marker_y = 524u;
++	} else {
++		/* J3XNU029: callback 37 and IOKIT_OBJECT registration. */
++		marker_stage = stage - 341;
++		marker_y = 512u;
+ 	}
+ 
+ 	unsigned int x0 = marker_stage * J3_MARK_STEP;
+diff --git a/osfmk/kern/startup.c b/osfmk/kern/startup.c
+index e13a846..bd2cf91 100644
+--- a/osfmk/kern/startup.c
++++ b/osfmk/kern/startup.c
+@@ -421,6 +421,10 @@ kernel_startup_initialize_upto(startup_subsystem_id_t upto)
+ 
+ 	while (cur < startup_entries_end && cur->subsystem <= upto) {
+ #if defined(J3Y17LTE)
++		if (cur->subsystem == STARTUP_SUB_MACH_IPC &&
++		    j3_mach_ipc_callback_index == 37u) {
++			sweet_early_mark(341, "J3XNU029 callback 37 dispatch entered");
++		}
+ 		if (j3_mach_ipc_callback_index == 38u) {
+ 			sweet_early_mark(324, "J3XNU028 callback 38 loop entered");
+ 		}
+@@ -440,6 +444,10 @@ kernel_startup_initialize_upto(startup_subsystem_id_t upto)
+ 			    cur->subsystem, cur->rank, cur->func, cur->arg);
+ 		}
+ #if defined(J3Y17LTE)
++		if (cur->subsystem == STARTUP_SUB_MACH_IPC &&
++		    j3_mach_ipc_callback_index == 37u) {
++			sweet_early_mark(342, "J3XNU029 callback 37 verbose logging passed");
++		}
+ 		if (cur->subsystem == STARTUP_SUB_MACH_IPC &&
+ 		    j3_mach_ipc_callback_index == 38u) {
+ 			sweet_early_mark(302, "J3XNU027 callback 38 verbose log passed");
+@@ -485,6 +493,10 @@ kernel_startup_initialize_upto(startup_subsystem_id_t upto)
+ 
+ 		kernel_startup_log(cur->subsystem);
+ #if defined(J3Y17LTE)
++		if (cur->subsystem == STARTUP_SUB_MACH_IPC &&
++		    j3_mach_ipc_callback_index == 37u) {
++			sweet_early_mark(343, "J3XNU029 callback 37 call imminent");
++		}
+ 		if (cur->subsystem == STARTUP_SUB_MACH_IPC &&
+ 		    j3_mach_ipc_callback_index == 38u) {
+ 			sweet_early_mark(303, "J3XNU027 callback 38 phase log passed");
+@@ -498,6 +510,10 @@ kernel_startup_initialize_upto(startup_subsystem_id_t upto)
+ #endif
+ 		cur->func(cur->arg);
+ #if defined(J3Y17LTE)
++		if (cur->subsystem == STARTUP_SUB_MACH_IPC &&
++		    j3_mach_ipc_callback_index == 37u) {
++			sweet_early_mark(344, "J3XNU029 callback 37 function returned");
++		}
+ 		if (cur->subsystem == STARTUP_SUB_MACH_IPC &&
+ 		    j3_mach_ipc_callback_index == 38u) {
+ 			sweet_early_mark(305, "J3XNU027 callback 38 function returned");
+diff --git a/osfmk/kern/ipc_kobject.c b/osfmk/kern/ipc_kobject.c
+index bb0e115..0d8f035 100644
+--- a/osfmk/kern/ipc_kobject.c
++++ b/osfmk/kern/ipc_kobject.c
+@@ -212,12 +212,18 @@ ipc_kobject_register_startup(ipc_kobject_ops_t ops)
+ {
+ #if defined(J3Y17LTE)
+ 	extern void sweet_early_mark(unsigned int, const char *);
++	if (ops->iko_op_type == IKOT_IOKIT_OBJECT) {
++		sweet_early_mark(345, "J3XNU029 IOKIT_OBJECT registration entered");
++	}
+ 	if (ops->iko_op_type == IKOT_IOKIT_CONNECT) {
+ 		sweet_early_mark(311, "J3XNU027 IOKIT_CONNECT registration entered");
+ 	}
+ #endif
+ 	if (ipc_kobject_ops_array[ops->iko_op_type].iko_op_type) {
+ #if defined(J3Y17LTE)
++		if (ops->iko_op_type == IKOT_IOKIT_OBJECT) {
++			sweet_early_mark(349, "J3XNU029 IOKIT_OBJECT duplicate detected");
++		}
+ 		if (ops->iko_op_type == IKOT_IOKIT_CONNECT) {
+ 			sweet_early_mark(315, "J3XNU027 IOKIT_CONNECT duplicate registration");
+ 		}
+@@ -225,12 +231,19 @@ ipc_kobject_register_startup(ipc_kobject_ops_t ops)
+ 		panic("trying to register kobject(%d) twice", ops->iko_op_type);
+ 	}
+ #if defined(J3Y17LTE)
++	if (ops->iko_op_type == IKOT_IOKIT_OBJECT) {
++		sweet_early_mark(346, "J3XNU029 IOKIT_OBJECT uniqueness check passed");
++	}
+ 	if (ops->iko_op_type == IKOT_IOKIT_CONNECT) {
+ 		sweet_early_mark(312, "J3XNU027 IOKIT_CONNECT uniqueness check passed");
+ 	}
+ #endif
+ 	ipc_kobject_ops_array[ops->iko_op_type] = *ops;
+ #if defined(J3Y17LTE)
++	if (ops->iko_op_type == IKOT_IOKIT_OBJECT) {
++		sweet_early_mark(347, "J3XNU029 IOKIT_OBJECT copy completed");
++		sweet_early_mark(348, "J3XNU029 IOKIT_OBJECT returning");
++	}
+ 	if (ops->iko_op_type == IKOT_IOKIT_CONNECT) {
+ 		sweet_early_mark(313, "J3XNU027 IOKIT_CONNECT copy completed");
+ 		sweet_early_mark(314, "J3XNU027 IOKIT_CONNECT returning");
