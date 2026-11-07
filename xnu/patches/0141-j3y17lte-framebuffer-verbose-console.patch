@@ -1,0 +1,140 @@
+diff --git a/osfmk/arm64/sweet_early.c b/osfmk/arm64/sweet_early.c
+--- a/osfmk/arm64/sweet_early.c
++++ b/osfmk/arm64/sweet_early.c
+@@ -1,4 +1,25 @@
+ static unsigned int early_disabled;
++
++/*
++ * J3XNU037: compact verbose text console.
++ *
++ * The permanent J3 framebuffer alias covers only the first 2 MiB
++ * (about 728 rows at 720 pixels x 32 bpp), so keep text in rows
++ * 0..335 and leave the lower diagnostic-marker/barcode area alone.
++ */
++#define J3_TEXT_WIDTH          720u
++#define J3_TEXT_CELL_W         8u
++#define J3_TEXT_CELL_H         16u
++#define J3_TEXT_COLS           (J3_TEXT_WIDTH / J3_TEXT_CELL_W)
++#define J3_TEXT_ROWS           21u
++#define J3_TEXT_FG             0xffffffffu
++#define J3_TEXT_BG             0xff000000u
++
++static unsigned int early_text_row;
++static unsigned int early_text_col;
++static unsigned int early_text_started;
++
++extern unsigned char iso_font[256 * 16];
+ 
+ #define J3_EARLY_STRIDE_PIXELS (2880u / 4u)
+ #define J3_MARK_Y              680u
+@@ -6,10 +27,82 @@
+ #define J3_MARK_W              24u
+ #define J3_MARK_STEP           32u
+ 
++static void
++j3_text_clear_row(unsigned int row)
++{
++	for (unsigned int y = row * J3_TEXT_CELL_H;
++	    y < (row + 1u) * J3_TEXT_CELL_H; y++) {
++		volatile uint32_t *line =
++		    early_fb + y * J3_EARLY_STRIDE_PIXELS;
++		for (unsigned int x = 0; x < J3_TEXT_WIDTH; x++) {
++			line[x] = J3_TEXT_BG;
++		}
++	}
++}
++
+ void
+ sweet_early_putc(char c)
+ {
+-	(void)c;
++	if (early_disabled) {
++		return;
++	}
++
++	if (!early_text_started) {
++		early_text_started = 1u;
++		j3_text_clear_row(0u);
++	}
++
++	if (c == '\r') {
++		early_text_col = 0u;
++		return;
++	}
++
++	if (c == '\b') {
++		if (early_text_col != 0u) {
++			early_text_col--;
++		}
++		return;
++	}
++
++	if (c == '\n' || early_text_col >= J3_TEXT_COLS) {
++		early_text_col = 0u;
++		early_text_row = (early_text_row + 1u) % J3_TEXT_ROWS;
++		j3_text_clear_row(early_text_row);
++		__asm__ volatile("dsb sy" ::: "memory");
++		if (c == '\n') {
++			return;
++		}
++	}
++
++	if ((unsigned char)c < 0x20u && c != '\t') {
++		return;
++	}
++
++	if (c == '\t') {
++		early_text_col = (early_text_col + 8u) & ~7u;
++		if (early_text_col >= J3_TEXT_COLS) {
++			early_text_col = 0u;
++			early_text_row = (early_text_row + 1u) % J3_TEXT_ROWS;
++			j3_text_clear_row(early_text_row);
++			__asm__ volatile("dsb sy" ::: "memory");
++		}
++		return;
++	}
++
++	const unsigned char *glyph = iso_font + (unsigned char)c * 16u;
++	unsigned int x0 = early_text_col * J3_TEXT_CELL_W;
++	unsigned int y0 = early_text_row * J3_TEXT_CELL_H;
++
++	for (unsigned int gy = 0; gy < 16u; gy++) {
++		volatile uint32_t *line =
++		    early_fb + (y0 + gy) * J3_EARLY_STRIDE_PIXELS + x0;
++		for (unsigned int gx = 0; gx < 8u; gx++) {
++			line[gx] = (glyph[gy] & (1u << gx)) ?
++			    J3_TEXT_FG : J3_TEXT_BG;
++		}
++	}
++
++	early_text_col++;
+ }
+ 
+ void
+diff --git a/osfmk/console/serial_console.c b/osfmk/console/serial_console.c
+--- a/osfmk/console/serial_console.c
++++ b/osfmk/console/serial_console.c
+@@ -1,6 +1,9 @@
+ #if __arm64__
+ #include <machine/machine_routines.h>
+ #include <arm/cpu_data_internal.h>
++#if defined(J3Y17LTE)
++#include <arm64/sweet_early.h>
++#endif
+ #endif
+ 
+ /* filler */
+@@ -8,4 +11,13 @@
+ 		_cnputc('\r', poll);
+ 	}
+ 
++#if defined(J3Y17LTE)
++	/*
++	 * J3XNU037: mirror the normal XNU console stream into the proven
++	 * permanent early-framebuffer alias. The renderer itself does not
++	 * call back into the console, so this cannot recurse.
++	 */
++	sweet_early_putc(c);
++#endif
++
+ 	cons_ops[idx].putc(c, poll);
