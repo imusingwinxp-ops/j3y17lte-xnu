@@ -47,6 +47,8 @@
 - **Expected best-case physical result:** first AppleCLCD SwapEnd(s) and a visible white Apple logo. Package the same kernel with `j3fb_noconsole=1` for the physical trial so console muting itself proves the first swap occurred.
 - **Build status:** CircleCI #45 passed for commit `57a664e430bfd78f44f2868a56b9c969d01a5ee8`.
 - **J3XNU047 PHYSICAL MILESTONE — FIRST WHITE APPLE LOGO, 2026-11-08 ~23:13 UK:** user-supplied photo sequence proves the first real post-console iOS framebuffer presentation on the J3.
+
+- **Immediate follow-up observation:** after remaining on the white Apple logo for a while, the J3 display transitions to black while the panel/device remains powered. Treat this as **likely display-off**, not a proven hang: donor A5XELTE patch0117 showed the same Apple-logo-to-black sequence, and its recovered log later contained `SWEET FB: display off` after real swaps. J3XNU047 currently has no J3 equivalent of the donor's later `a5fb_keep_on=1` override, so an iOS power-state request can still blank the framebuffer. Verify with the same J3XNU047 kernel repackaged without `j3fb_noconsole=1` before changing kernel code.
   - Before the transition the console shows continued iOS userland startup, including `exec backboardd`, `exec bluetoothd`, `exec identityservicesd`, `exec mobiletimerd`, `exec imagent`, `exec MobileGestaltHelper`, `exec ReportCrash`, `exec tccd`, and many other services.
   - The package was booted with `j3fb_noconsole=1`. The console subsequently disappears and the display becomes black with a centered **white Apple logo**. Because J3's console mute is only armed on the AppleCLCD SwapEnd path, this is device proof that a real framebuffer swap occurred.
   - This supersedes all earlier “no SwapEnd” states from J3XNU045/046.
