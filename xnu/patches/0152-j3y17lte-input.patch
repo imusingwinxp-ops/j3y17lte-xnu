@@ -1,0 +1,774 @@
+--- a/bsd/conf/files
++++ b/bsd/conf/files
+@@ -106,6 +106,7 @@
+ bsd/dev/memdev.c			standard
+ bsd/dev/sweet_ufs.c			standard
+ bsd/dev/j3y17lte_emmc.c			standard
++bsd/dev/j3y17lte_input.c			standard
+ bsd/dev/sweet_sample.c			standard
+ bsd/dev/sweet_keys.c			standard
+ bsd/dev/sweet_touch.c			standard
+--- a/iokit/bsddev/IOKitBSDInit.cpp
++++ b/iokit/bsddev/IOKitBSDInit.cpp
+@@ -69,6 +69,7 @@
+ extern boolean_t cpuid_vmm_present(void);
+ #if defined(ARM64_BOARD_CONFIG_J3Y17LTE)
+ extern void j3y17lte_emmc_probe(void);
++extern void j3y17lte_input_init(void);
+ #endif
+ 
+ #define ROUNDUP(a, b) (((a) + ((b) - 1)) & (~((b) - 1)))
+@@ -770,6 +771,7 @@
+ 	}
+ 
+ #if defined(ARM64_BOARD_CONFIG_J3Y17LTE)
++	j3y17lte_input_init();
+ 	{
+ 	uint32_t emmcprobe = 0;
+ 	PE_parse_boot_argn("emmcprobe", &emmcprobe, sizeof(emmcprobe));
+--- a/iokit/KernelConfigTables.cpp
++++ b/iokit/KernelConfigTables.cpp
+@@ -79,7 +79,6 @@
+     "     'IONameMatch'     = 'sweet,display';"
+ #endif
+     "   },"
+-#if !defined(ARM64_BOARD_CONFIG_J3Y17LTE)
+     "   {"
+     "     'IOClass'         = SweetHIDButtons;"
+     "     'IOProviderClass' = IOResources;"
+@@ -90,6 +89,7 @@
+     "     'IOProviderClass' = IOResources;"
+     "     'IOMatchCategory' = SweetHIDTouch;"
+     "   },"
++#if !defined(ARM64_BOARD_CONFIG_J3Y17LTE)
+     "   {"
+     "     'IOClass'         = SweetBattery;"
+     "     'IOProviderClass' = IOResources;"
+--- a/iokit/Kernel/arm/hid/SweetHID.cpp
++++ b/iokit/Kernel/arm/hid/SweetHID.cpp
+@@ -350,12 +350,20 @@
+ #define SWEET_TOUCH_FINGERS 10
+ /*
+  * Contacts that start this close to a panel edge (pixels, ~3 mm) carry
+  * kIOHIDDigitizerEventFromEdgeTip for their whole life, as Apple's touch
+  * firmware reports them. UIKit derives UITouch's edge type from that bit
+  * (_UIEventHIDTouchEdgeTypeForHIDEvent); without it there is no home or
+  * app-switcher gesture.
+  */
++#if defined(ARM64_BOARD_CONFIG_J3Y17LTE)
++#define SWEET_TOUCH_PANEL_W 720
++#define SWEET_TOUCH_PANEL_H 1280
++#define SWEET_TOUCH_EDGE_PX 24
++#else
++#define SWEET_TOUCH_PANEL_W 1080
++#define SWEET_TOUCH_PANEL_H 2400
+ #define SWEET_TOUCH_EDGE_PX 48
++#endif
+ class SweetHIDTouch : public IOHIDEventService {
+ 	OSDeclareDefaultStructors(SweetHIDTouch);
+ public:
+@@ -432,16 +440,24 @@
+ 	if (!fLock || !IOHIDEventService::start(provider)) {
+ 		return false;
+ 	}
++#if defined(ARM64_BOARD_CONFIG_J3Y17LTE)
++	fLogicalW = SWEET_TOUCH_PANEL_W;
++	fLogicalH = SWEET_TOUCH_PANEL_H;
++	fOffX = fOffY = 0;
++#else
+ 	int native = 0;
+ 	PE_parse_boot_argn("sweetfb_native", &native, sizeof(native));
+ 	fLogicalW = native ? 1080 : 1125;
+ 	fLogicalH = native ? 2400 : 2436;
+ 	fOffX = (fLogicalW - 1080) / 2;
+ 	fOffY = (fLogicalH - 2400) / 2;
++#endif
+ 	/* The digitizer covers the main display (backboardd maps it 1:1). */
+ 	setProperty("DisplayIntegrated", kOSBooleanTrue);
++#if defined(ARM64_BOARD_CONFIG_J3Y17LTE)
++	setProperty("SurfaceWidth", (unsigned long long)(62 << 16), 32);
++	setProperty("SurfaceHeight", (unsigned long long)(110 << 16), 32);
++#else
+ 	setProperty("SurfaceWidth", (unsigned long long)(68 << 16), 32);	/* mm, 16.16 */
+ 	setProperty("SurfaceHeight", (unsigned long long)(151 << 16), 32);
++#endif
+ 	gSweetTouch = this;
+ 	registerService();
+ 	IOLog("SWEET HID: touch registered\n");
+@@ -458,12 +474,12 @@
+ 	if (finger < 0 || finger >= SWEET_TOUCH_FINGERS) {
+ 		return;
+ 	}
+-	x = x < 0 ? 0 : (x > 1079 ? 1079 : x);
+-	y = y < 0 ? 0 : (y > 2399 ? 2399 : y);
++	x = x < 0 ? 0 : (x >= SWEET_TOUCH_PANEL_W ? SWEET_TOUCH_PANEL_W - 1 : x);
++	y = y < 0 ? 0 : (y >= SWEET_TOUCH_PANEL_H ? SWEET_TOUCH_PANEL_H - 1 : y);
+ 
+ 	IOLockLock(fLock);
+ 	bool was = fDown[finger];
+-	/* Panel pixels -> the presented 1125x2436 display (SweetFramebuffer.cpp). */
++	/* Panel pixels -> the presented display (SweetFramebuffer.cpp). */
+ 	IOFixed nx = (IOFixed)(((int64_t)(x + fOffX) << 16) / fLogicalW);
+ 	IOFixed ny = (IOFixed)(((int64_t)(y + fOffY) << 16) / fLogicalH);
+ 	bool moved = down && (nx != fX[finger] || ny != fY[finger]);
+@@ -472,8 +488,8 @@
+ 		return;
+ 	}
+ 	if (!was && down) {
+-		fEdge[finger] = x < SWEET_TOUCH_EDGE_PX || x > 1079 - SWEET_TOUCH_EDGE_PX ||
+-		    y < SWEET_TOUCH_EDGE_PX || y > 2399 - SWEET_TOUCH_EDGE_PX;
++		fEdge[finger] = x < SWEET_TOUCH_EDGE_PX || x > SWEET_TOUCH_PANEL_W - 1 - SWEET_TOUCH_EDGE_PX ||
++		    y < SWEET_TOUCH_EDGE_PX || y > SWEET_TOUCH_PANEL_H - 1 - SWEET_TOUCH_EDGE_PX;
+ 	}
+ 
+ 	collection = IOHIDEvent::digitizerEvent(now, 0, kIOHIDDigitizerTransducerTypeHand, false, 0, 0, 0);
+--- /dev/null
++++ b/bsd/dev/j3y17lte_input.c
+@@ -0,0 +1,647 @@
++/*
++ * J3Y17LTE physical input bridge: Exynos7570 GPIO keys and Synaptics TD4100.
++ * Hardware facts come from Samsung's J3Y17LTE kernel/DTS.
++ */
++#if defined(ARM64_BOARD_CONFIG_J3Y17LTE)
++#include <sys/param.h>
++#include <sys/systm.h>
++#include <kern/clock.h>
++#include <kern/thread.h>
++#include <kern/sched_prim.h>
++#include <machine/machine_routines.h>
++#include <pexpert/pexpert.h>
++
++extern vm_offset_t ml_io_map(vm_offset_t, vm_size_t);
++extern void sweet_hid_key(int key, int down);
++extern void sweet_hid_touch(int finger, int down, int x, int y);
++
++#define J3_KEYS_GPIO_PA         0x139f0000u
++#define J3_TOUCH_GPIO_PA        0x139d0000u
++#define J3_GPA0_DAT             0x044u
++#define J3_GPA2_DAT             0x084u
++#define J3_GPIO_CON             0x000u
++#define J3_GPIO_DAT             0x004u
++#define J3_GPIO_PUD             0x008u
++
++#define J3_RMI_ADDR             0x4bu
++#define J3_RMI_PAGES            4u
++#define J3_RMI_PDT_START        0xe9u
++#define J3_RMI_PDT_END          0xd0u
++#define J3_RMI_PDT_SIZE         6u
++#define J3_RMI_F01              0x01u
++#define J3_RMI_F12              0x12u
++#define J3_RMI_CONFIGURED       0x80u
++#define J3_RMI_NO_SLEEP         0x04u
++#define J3_RMI_REPORT_ENABLE    0xdfu
++
++#define J3_TOUCH_POINTS         5u
++#define J3_TOUCH_STRIDE         7u
++#define J3_TOUCH_W              720u
++#define J3_TOUCH_H              1280u
++
++static vm_offset_t j3_keys_gpio;
++static vm_offset_t j3_touch_gpio;
++static bool j3_input_started;
++static bool j3_touch_bus_ready;
++static unsigned j3_sda_pin;
++static unsigned j3_scl_pin;
++static uint16_t j3_f01_ctrl;
++static uint16_t j3_f12_query;
++static uint16_t j3_f12_ctrl;
++static uint16_t j3_f12_data;
++static uint16_t j3_f12_data1;
++static unsigned j3_touch_points;
++static unsigned j3_touch_max_x = J3_TOUCH_W - 1;
++static unsigned j3_touch_max_y = J3_TOUCH_H - 1;
++static bool j3_touch_down[J3_TOUCH_POINTS];
++static int j3_touch_x[J3_TOUCH_POINTS];
++static int j3_touch_y[J3_TOUCH_POINTS];
++static int j3_keys_sleep_chan;
++static int j3_touch_sleep_chan;
++
++static uint32_t
++j3_rd(vm_offset_t base, uint32_t off)
++{
++	uint32_t value = *(volatile uint32_t *)(base + off);
++	__asm__ volatile("dmb oshld" ::: "memory");
++	return value;
++}
++
++static void
++j3_wr(vm_offset_t base, uint32_t off, uint32_t value)
++{
++	__asm__ volatile("dmb oshst" ::: "memory");
++	*(volatile uint32_t *)(base + off) = value;
++	__asm__ volatile("dsb osh" ::: "memory");
++}
++
++static void
++j3_sleep_ms(int *chan, unsigned ms)
++{
++	uint64_t deadline;
++	clock_interval_to_deadline(ms, NSEC_PER_MSEC, &deadline);
++	(void)assert_wait_deadline(chan, THREAD_UNINT, deadline);
++	thread_block(THREAD_CONTINUE_NULL);
++}
++
++static uint8_t
++j3_keys_sample(void)
++{
++	uint32_t a0 = j3_rd(j3_keys_gpio, J3_GPA0_DAT);
++	uint32_t a2 = j3_rd(j3_keys_gpio, J3_GPA2_DAT);
++	uint8_t state = 0;
++
++	if (!(a0 & (1u << 7))) {
++		state |= 1u << 0; /* volume up */
++	}
++	if (!(a2 & (1u << 3))) {
++		state |= 1u << 1; /* volume down */
++	}
++	if (!(a0 & (1u << 4))) {
++		state |= 1u << 2; /* home */
++	}
++	return state;
++}
++
++static void
++j3_keys_thread(void *arg, wait_result_t result)
++{
++	static const int hid_key[3] = {1, 2, 3};
++	uint8_t stable = j3_keys_sample();
++	uint8_t candidate = stable;
++	unsigned repeated = 0;
++	(void)arg;
++	(void)result;
++
++	printf("J3 INPUT: keys online gpa0=%#x gpa2=%#x state=%#x\n",
++	    j3_rd(j3_keys_gpio, J3_GPA0_DAT),
++	    j3_rd(j3_keys_gpio, J3_GPA2_DAT), stable);
++
++	for (;;) {
++		uint8_t sample = j3_keys_sample();
++		if (sample == candidate) {
++			if (repeated < 2) {
++				repeated++;
++			}
++		} else {
++			candidate = sample;
++			repeated = 0;
++		}
++		if (repeated == 2 && stable != candidate) {
++			uint8_t changed = stable ^ candidate;
++			for (unsigned i = 0; i < 3; i++) {
++				if (changed & (1u << i)) {
++					int down = !!(candidate & (1u << i));
++					printf("J3 INPUT: key=%d down=%d\n", hid_key[i], down);
++					sweet_hid_key(hid_key[i], down);
++				}
++			}
++			stable = candidate;
++		}
++		j3_sleep_ms(&j3_keys_sleep_chan, 10);
++	}
++}
++
++static void
++j3_gpio_mode(unsigned pin, unsigned mode)
++{
++	unsigned shift = pin * 4u;
++	uint32_t con = j3_rd(j3_touch_gpio, J3_GPIO_CON);
++	con &= ~(0xfu << shift);
++	con |= (mode & 0xfu) << shift;
++	j3_wr(j3_touch_gpio, J3_GPIO_CON, con);
++}
++
++static void
++j3_line_low(unsigned pin)
++{
++	uint32_t dat = j3_rd(j3_touch_gpio, J3_GPIO_DAT);
++	j3_wr(j3_touch_gpio, J3_GPIO_DAT, dat & ~(1u << pin));
++	j3_gpio_mode(pin, 1u);
++}
++
++static void
++j3_line_release(unsigned pin)
++{
++	j3_gpio_mode(pin, 0u);
++}
++
++static bool
++j3_line_high(unsigned pin)
++{
++	return !!(j3_rd(j3_touch_gpio, J3_GPIO_DAT) & (1u << pin));
++}
++
++static bool
++j3_clock_high(void)
++{
++	j3_line_release(j3_scl_pin);
++	for (unsigned i = 0; i < 1000; i++) {
++		if (j3_line_high(j3_scl_pin)) {
++			return true;
++		}
++		delay(1);
++	}
++	return false;
++}
++
++static bool
++j3_i2c_start(void)
++{
++	j3_line_release(j3_sda_pin);
++	if (!j3_clock_high()) {
++		return false;
++	}
++	delay(2);
++	j3_line_low(j3_sda_pin);
++	delay(2);
++	j3_line_low(j3_scl_pin);
++	delay(2);
++	return true;
++}
++
++static void
++j3_i2c_stop(void)
++{
++	j3_line_low(j3_sda_pin);
++	delay(2);
++	(void)j3_clock_high();
++	delay(2);
++	j3_line_release(j3_sda_pin);
++	delay(3);
++}
++
++static bool
++j3_i2c_write_byte(uint8_t value)
++{
++	for (unsigned bit = 0; bit < 8; bit++) {
++		if (value & 0x80u) {
++			j3_line_release(j3_sda_pin);
++		} else {
++			j3_line_low(j3_sda_pin);
++		}
++		delay(1);
++		if (!j3_clock_high()) {
++			j3_line_low(j3_scl_pin);
++			return false;
++		}
++		delay(2);
++		j3_line_low(j3_scl_pin);
++		delay(1);
++		value <<= 1;
++	}
++
++	j3_line_release(j3_sda_pin);
++	if (!j3_clock_high()) {
++		j3_line_low(j3_scl_pin);
++		return false;
++	}
++	delay(1);
++	bool ack = !j3_line_high(j3_sda_pin);
++	delay(1);
++	j3_line_low(j3_scl_pin);
++	delay(1);
++	return ack;
++}
++
++static uint8_t
++j3_i2c_read_byte(bool ack)
++{
++	uint8_t value = 0;
++	j3_line_release(j3_sda_pin);
++	for (unsigned bit = 0; bit < 8; bit++) {
++		value <<= 1;
++		if (j3_clock_high()) {
++			delay(1);
++			if (j3_line_high(j3_sda_pin)) {
++				value |= 1u;
++			}
++			delay(1);
++		}
++		j3_line_low(j3_scl_pin);
++		delay(1);
++	}
++
++	if (ack) {
++		j3_line_low(j3_sda_pin);
++	} else {
++		j3_line_release(j3_sda_pin);
++	}
++	(void)j3_clock_high();
++	delay(2);
++	j3_line_low(j3_scl_pin);
++	j3_line_release(j3_sda_pin);
++	delay(1);
++	return value;
++}
++
++static bool
++j3_i2c_probe(void)
++{
++	bool ok = j3_i2c_start();
++	if (ok) {
++		ok = j3_i2c_write_byte((uint8_t)(J3_RMI_ADDR << 1));
++	}
++	j3_i2c_stop();
++	return ok;
++}
++
++static bool
++j3_touch_select_pins(void)
++{
++	uint32_t pud = j3_rd(j3_touch_gpio, J3_GPIO_PUD);
++	j3_wr(j3_touch_gpio, J3_GPIO_PUD, pud & ~0xfu);
++
++	static const unsigned candidates[2][2] = {
++		{0, 1},
++		{1, 0},
++	};
++
++	for (unsigned which = 0; which < 2; which++) {
++		j3_sda_pin = candidates[which][0];
++		j3_scl_pin = candidates[which][1];
++		j3_line_release(j3_sda_pin);
++		j3_line_release(j3_scl_pin);
++		delay(20);
++		if (!j3_line_high(j3_sda_pin) || !j3_line_high(j3_scl_pin)) {
++			continue;
++		}
++		for (unsigned attempt = 0; attempt < 3; attempt++) {
++			if (j3_i2c_probe()) {
++				printf("J3 INPUT: TD4100 ACK at 0x4b SDA=GPC3.%u SCL=GPC3.%u\n",
++				    j3_sda_pin, j3_scl_pin);
++				return true;
++			}
++			delay(50);
++		}
++	}
++	return false;
++}
++
++static bool
++j3_rmi_select_page(uint8_t page)
++{
++	if (!j3_i2c_start()) {
++		return false;
++	}
++	bool ok = j3_i2c_write_byte((uint8_t)(J3_RMI_ADDR << 1)) &&
++	    j3_i2c_write_byte(0xffu) && j3_i2c_write_byte(page);
++	j3_i2c_stop();
++	return ok;
++}
++
++static bool
++j3_rmi_read(uint16_t addr, uint8_t *data, unsigned count)
++{
++	if (!count || !j3_rmi_select_page((uint8_t)(addr >> 8))) {
++		return false;
++	}
++	if (!j3_i2c_start()) {
++		return false;
++	}
++	if (!j3_i2c_write_byte((uint8_t)(J3_RMI_ADDR << 1)) ||
++	    !j3_i2c_write_byte((uint8_t)addr)) {
++		j3_i2c_stop();
++		return false;
++	}
++	if (!j3_i2c_start() ||
++	    !j3_i2c_write_byte((uint8_t)((J3_RMI_ADDR << 1) | 1u))) {
++		j3_i2c_stop();
++		return false;
++	}
++	for (unsigned i = 0; i < count; i++) {
++		data[i] = j3_i2c_read_byte(i + 1 < count);
++	}
++	j3_i2c_stop();
++	return true;
++}
++
++static bool
++j3_rmi_write(uint16_t addr, const uint8_t *data, unsigned count)
++{
++	if (!count || !j3_rmi_select_page((uint8_t)(addr >> 8))) {
++		return false;
++	}
++	if (!j3_i2c_start()) {
++		return false;
++	}
++	bool ok = j3_i2c_write_byte((uint8_t)(J3_RMI_ADDR << 1)) &&
++	    j3_i2c_write_byte((uint8_t)addr);
++	for (unsigned i = 0; ok && i < count; i++) {
++		ok = j3_i2c_write_byte(data[i]);
++	}
++	j3_i2c_stop();
++	return ok;
++}
++
++static unsigned
++j3_pop8(uint8_t value)
++{
++	unsigned count = 0;
++	while (value) {
++		count += value & 1u;
++		value >>= 1;
++	}
++	return count;
++}
++
++static bool
++j3_rmi_discover(void)
++{
++	j3_f01_ctrl = 0;
++	j3_f12_query = j3_f12_ctrl = j3_f12_data = 0;
++
++	for (unsigned page = 0; page < J3_RMI_PAGES; page++) {
++		for (int reg = J3_RMI_PDT_START; reg > (int)J3_RMI_PDT_END;
++		    reg -= J3_RMI_PDT_SIZE) {
++			uint8_t fd[6];
++			uint16_t addr = (uint16_t)((page << 8) | (unsigned)reg);
++			if (!j3_rmi_read(addr, fd, sizeof(fd))) {
++				return false;
++			}
++			if (fd[5] == 0) {
++				break;
++			}
++			if (fd[5] == J3_RMI_F01) {
++				j3_f01_ctrl = (uint16_t)((page << 8) | fd[2]);
++			} else if (fd[5] == J3_RMI_F12) {
++				j3_f12_query = (uint16_t)((page << 8) | fd[0]);
++				j3_f12_ctrl = (uint16_t)((page << 8) | fd[2]);
++				j3_f12_data = (uint16_t)((page << 8) | fd[3]);
++			}
++		}
++	}
++	return j3_f01_ctrl && j3_f12_query && j3_f12_ctrl && j3_f12_data;
++}
++
++static bool
++j3_touch_setup(void)
++{
++	if (!j3_touch_bus_ready) {
++		j3_touch_bus_ready = j3_touch_select_pins();
++		if (!j3_touch_bus_ready) {
++			return false;
++		}
++	}
++	if (!j3_rmi_discover()) {
++		return false;
++	}
++
++	uint8_t q5[5];
++	if (!j3_rmi_read((uint16_t)(j3_f12_query + 5), q5, sizeof(q5))) {
++		return false;
++	}
++	if (!(q5[3] & 0x80u) || !(q5[4] & 0x10u)) {
++		printf("J3 INPUT: TD4100 F12 missing ctrl23/28 q5=%02x:%02x:%02x:%02x:%02x\n",
++		    q5[0], q5[1], q5[2], q5[3], q5[4]);
++		return false;
++	}
++
++	unsigned ctrl8_off = j3_pop8(q5[1]);
++	unsigned ctrl23_off = j3_pop8(q5[1]) + j3_pop8(q5[2]) +
++	    j3_pop8((uint8_t)(q5[3] & 0x7fu));
++	unsigned ctrl28_off = j3_pop8(q5[1]) + j3_pop8(q5[2]) +
++	    j3_pop8(q5[3]) + j3_pop8((uint8_t)(q5[4] & 0x0fu));
++
++	uint8_t ctrl23[2];
++	if (!j3_rmi_read((uint16_t)(j3_f12_ctrl + ctrl23_off),
++	    ctrl23, sizeof(ctrl23))) {
++		return false;
++	}
++	uint8_t obj = (uint8_t)(ctrl23[0] | 1u);
++	if (obj != ctrl23[0] &&
++	    !j3_rmi_write((uint16_t)(j3_f12_ctrl + ctrl23_off), &obj, 1)) {
++		return false;
++	}
++	j3_touch_points = ctrl23[1] ? ctrl23[1] : J3_TOUCH_POINTS;
++	if (j3_touch_points > J3_TOUCH_POINTS) {
++		j3_touch_points = J3_TOUCH_POINTS;
++	}
++
++	uint8_t report = J3_RMI_REPORT_ENABLE;
++	if (!j3_rmi_write((uint16_t)(j3_f12_ctrl + ctrl28_off), &report, 1)) {
++		return false;
++	}
++
++	uint8_t q8_size;
++	uint8_t q8[3] = {0, 0, 0};
++	if (!j3_rmi_read((uint16_t)(j3_f12_query + 7), &q8_size, 1) ||
++	    q8_size < 2 || q8_size > sizeof(q8) ||
++	    !j3_rmi_read((uint16_t)(j3_f12_query + 8), q8, q8_size) ||
++	    !(q8[1] & 0x02u)) {
++		return false;
++	}
++	j3_f12_data1 = (uint16_t)(j3_f12_data + ((q8[1] & 0x01u) ? 1u : 0u));
++
++	uint8_t geometry[4];
++	if (j3_rmi_read((uint16_t)(j3_f12_ctrl + ctrl8_off),
++	    geometry, sizeof(geometry))) {
++		unsigned maxx = (unsigned)geometry[0] | ((unsigned)geometry[1] << 8);
++		unsigned maxy = (unsigned)geometry[2] | ((unsigned)geometry[3] << 8);
++		if (maxx >= 700 && maxx < 2048) {
++			j3_touch_max_x = maxx;
++		}
++		if (maxy >= 1200 && maxy < 4096) {
++			j3_touch_max_y = maxy;
++		}
++	}
++
++	uint8_t f01;
++	if (!j3_rmi_read(j3_f01_ctrl, &f01, 1)) {
++		return false;
++	}
++	f01 = (uint8_t)((f01 & ~0x03u) | J3_RMI_NO_SLEEP | J3_RMI_CONFIGURED);
++	if (!j3_rmi_write(j3_f01_ctrl, &f01, 1)) {
++		return false;
++	}
++
++	printf("J3 INPUT: TD4100 RMI ready F01=%#x F12 q=%#x c=%#x d1=%#x points=%u max=%ux%u\n",
++	    j3_f01_ctrl, j3_f12_query, j3_f12_ctrl, j3_f12_data1,
++	    j3_touch_points, j3_touch_max_x, j3_touch_max_y);
++	return true;
++}
++
++static int
++j3_touch_scale(unsigned value, unsigned maximum, unsigned outmax)
++{
++	if (!maximum) {
++		maximum = outmax;
++	}
++	if (value > maximum) {
++		value = maximum;
++	}
++	return (int)(((uint64_t)value * outmax) / maximum);
++}
++
++static void
++j3_touch_release_all(void)
++{
++	for (unsigned i = 0; i < J3_TOUCH_POINTS; i++) {
++		if (j3_touch_down[i]) {
++			j3_touch_down[i] = false;
++			sweet_hid_touch((int)i, 0, j3_touch_x[i], j3_touch_y[i]);
++		}
++	}
++}
++
++static bool
++j3_touch_frame(void)
++{
++	uint8_t frame[J3_TOUCH_POINTS * J3_TOUCH_STRIDE];
++	unsigned bytes = j3_touch_points * J3_TOUCH_STRIDE;
++	if (!bytes || bytes > sizeof(frame) ||
++	    !j3_rmi_read(j3_f12_data1, frame, bytes)) {
++		return false;
++	}
++
++	for (unsigned i = 0; i < j3_touch_points; i++) {
++		unsigned off = i * J3_TOUCH_STRIDE;
++		unsigned status = frame[off] & 0x07u;
++		unsigned rawx = (unsigned)frame[off + 1] |
++		    ((unsigned)frame[off + 2] << 8);
++		unsigned rawy = (unsigned)frame[off + 3] |
++		    ((unsigned)frame[off + 4] << 8);
++		bool down = status != 0 && rawx != 0xffffu && rawy != 0xffffu;
++		int x = down ? j3_touch_scale(rawx, j3_touch_max_x, J3_TOUCH_W - 1) :
++		    j3_touch_x[i];
++		int y = down ? j3_touch_scale(rawy, j3_touch_max_y, J3_TOUCH_H - 1) :
++		    j3_touch_y[i];
++
++		if (down) {
++			j3_touch_x[i] = x;
++			j3_touch_y[i] = y;
++		}
++		sweet_hid_touch((int)i, down, x, y);
++		j3_touch_down[i] = down;
++	}
++	return true;
++}
++
++static void
++j3_touch_thread(void *arg, wait_result_t result)
++{
++	bool ready = false;
++	unsigned errors = 0;
++	unsigned setup_failures = 0;
++	(void)arg;
++	(void)result;
++
++	for (;;) {
++		if (!ready) {
++			if (j3_touch_setup()) {
++				ready = true;
++				errors = 0;
++				setup_failures = 0;
++			} else {
++				if ((setup_failures++ % 10u) == 0) {
++					printf("J3 INPUT: TD4100 not ready; retrying\n");
++				}
++				j3_sleep_ms(&j3_touch_sleep_chan, 1000);
++				continue;
++			}
++		}
++
++		if (!j3_touch_frame()) {
++			if (++errors >= 5) {
++				printf("J3 INPUT: TD4100 read errors; rediscovering\n");
++				j3_touch_release_all();
++				ready = false;
++				j3_touch_bus_ready = false;
++				errors = 0;
++			}
++		} else {
++			errors = 0;
++		}
++		j3_sleep_ms(&j3_touch_sleep_chan, 20);
++	}
++}
++
++void
++j3y17lte_input_init(void)
++{
++	int enabled = 1;
++	int keys_enabled = 1;
++	int touch_enabled = 1;
++	thread_t thread;
++
++	if (j3_input_started) {
++		return;
++	}
++	j3_input_started = true;
++	(void)PE_parse_boot_argn("j3input", &enabled, sizeof(enabled));
++	(void)PE_parse_boot_argn("j3keys", &keys_enabled, sizeof(keys_enabled));
++	(void)PE_parse_boot_argn("j3touch", &touch_enabled, sizeof(touch_enabled));
++	if (!enabled) {
++		printf("J3 INPUT: disabled (j3input=0)\n");
++		return;
++	}
++
++	if (keys_enabled) {
++		j3_keys_gpio = ml_io_map(J3_KEYS_GPIO_PA, 0x1000);
++		if (j3_keys_gpio) {
++			kern_return_t kr = kernel_thread_start(j3_keys_thread, NULL, &thread);
++			if (kr == KERN_SUCCESS) {
++				thread_deallocate(thread);
++			} else {
++				printf("J3 INPUT: key thread start failed %d\n", kr);
++			}
++		} else {
++			printf("J3 INPUT: key GPIO map failed\n");
++		}
++	}
++
++	if (touch_enabled) {
++		j3_touch_gpio = ml_io_map(J3_TOUCH_GPIO_PA, 0x1000);
++		if (j3_touch_gpio) {
++			kern_return_t kr = kernel_thread_start(j3_touch_thread, NULL, &thread);
++			if (kr == KERN_SUCCESS) {
++				thread_deallocate(thread);
++			} else {
++				printf("J3 INPUT: touch thread start failed %d\n", kr);
++			}
++		} else {
++			printf("J3 INPUT: touch GPIO map failed\n");
++		}
++	}
++}
++#endif /* ARM64_BOARD_CONFIG_J3Y17LTE */

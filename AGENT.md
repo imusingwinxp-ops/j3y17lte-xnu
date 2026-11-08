@@ -35,6 +35,19 @@
 - **Current J3XNU045 status:** kernel, ADT and package are verified; physical display-service registration, system-boot completion and SpringBoard spawn authorization are verified. Actual SpringBoard/backboardd survival and a GUI swap remain unproven.
 - **Best zero-CI next diagnostic:** repackage the same J3XNU045 kernel with only `j3fb_noconsole=1`. The console-mute flag is checked on the first actual framebuffer SwapEnd path, so if the console never mutes then no swap reached AppleCLCD; if it mutes, the swap path ran and the resulting visible frame/black/garbled output becomes the next evidence. Panics retain the existing J3 diagnostics. Do not build J3XNU046 merely for this test.
 - **J3XNU045 no-console repack VERIFIED:** same kernel and ADT, boot args additionally include only `j3fb_noconsole=1`.
+## J3XNU048 — physical touch + GPIO keys
+
+- **Goal:** make the proven J3XNU047 iOS lock screen physically usable in one build: real Synaptics touch plus direct J3 hardware keys.
+- **Patch:** `0152-j3y17lte-input.patch`.
+- **HID services:** enables the existing `SweetHIDButtons` and `SweetHIDTouch` personalities on J3 while keeping `SweetBattery` excluded. `SweetHIDTouch` gets J3-native 720x1280 geometry, zero offset, ~62x110 mm surface size and a 24-pixel edge threshold; SWEET behavior remains under the non-J3 branch.
+- **Direct keys from Samsung source:** Exynos7570 ALIVE GPIO base `0x139f0000`; Volume Up = GPA0.7, Home = GPA0.4, Volume Down = GPA2.3. They are polled read-only with debounce and feed `sweet_hid_key()`. The side power key is PMIC-interrupt-backed and is intentionally not guessed in this one-build attempt.
+- **Touch from Samsung source:** Synaptics RMI4 TD4100 at address `0x4b`, 720x1280, on GPC3.0/1 under TOUCH GPIO base `0x139d0000`. The driver uses open-drain GPIO bit-banged I2C, tries both SDA/SCL conventions by ACK, scans the RMI4 PDT at runtime for F01/F12, configures the production type+XY+Wx/Wy report, caps to five contacts and polls at 50 Hz.
+- **Failure isolation:** touch setup/read failure is non-fatal and retried; `j3touch=0`, `j3keys=0`, or `j3input=0` can disable pieces without another kernel build. No PMIC writes, touch firmware/NVM writes, eMMC/HFS changes, or display changes.
+- **Full lexical audit:** all existing patches were scanned for `bsd/conf/files`, `iokit/bsddev/IOKitBSDInit.cpp`, `iokit/KernelConfigTables.cpp`, and `iokit/Kernel/arm/hid/SweetHID.cpp`. Relevant later overlaps were reconstructed: patch0142 J3 eMMC in files/IOKitBSDInit and patch0149 J3 AppleCLCD in KernelConfigTables; patches0150/0151 do not overlap.
+- **Strict preflight:** the final patch blob was applied exactly (no fuzz) to reconstructed post-chain `IOKitBSDInit.cpp`, `KernelConfigTables.cpp`, and `SweetHID.cpp`; `bsd/conf/files` had already passed the same strict apply before unrelated hunk-header corrections. New driver header count matches all 647 added source lines and source trailing-whitespace count is zero.
+- **Expected physical test:** package with the proven J3XNU047 boot args including `j3fb_noconsole=1`. Home/volume should emit native consumer-control HID events; TD4100 tap/swipe should emit digitizer events and make the lock screen interactive.
+- **Status:** source committed for exactly one CircleCI build. Do not manually rerun.
+
 ## J3XNU047 — HFS atomic RENAME_SWAP compatibility (Apple-logo attempt)
 
 - **Purpose:** use the final available build on the exact donor change that moved A5XELTE from the same post-SpringBoard/no-swap stage to its first photographed white Apple logo and recorded framebuffer swaps.
