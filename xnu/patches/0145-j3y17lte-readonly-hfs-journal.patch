@@ -1,0 +1,23 @@
+diff --git a/bsd/sweet_hfs/core/hfs_vfsutils.c b/bsd/sweet_hfs/core/hfs_vfsutils.c
+--- a/bsd/sweet_hfs/core/hfs_vfsutils.c
++++ b/bsd/sweet_hfs/core/hfs_vfsutils.c
+@@ -719,11 +719,16 @@
+ 	// happens if a previous version of MacOS X (or 9) touched the disk.
+ 	// In that case hfs_late_journal_init() will go re-locate the journal 
+ 	// and journal_info_block files and validate that they're still kosher.
+ 	//
+-	if (   (vcb->vcbAtrb & kHFSVolumeJournaledMask)
+-		&& (SWAP_BE32(vhp->lastMountedVersion) != kHFSJMountVersion)
+-		&& (hfsmp->jnl == NULL)) {
++	if (   (vcb->vcbAtrb & kHFSVolumeJournaledMask)
++#if defined(ARM64_BOARD_CONFIG_J3Y17LTE)
++		/* J3XNU041: direct eMMC root is intentionally read-only; do not run the
++		 * late journal path because it rewrites the journal header. */
++		&& ((hfsmp->hfs_flags & HFS_READ_ONLY) == 0)
++#endif
++		&& (SWAP_BE32(vhp->lastMountedVersion) != kHFSJMountVersion)
++		&& (hfsmp->jnl == NULL)) {
+ 
+ 		retval = hfs_late_journal_init(hfsmp, vhp, args);
+ 		if (retval != 0) {
+ 			if (retval == EROFS) {
