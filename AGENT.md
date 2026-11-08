@@ -54,33 +54,42 @@
 - The framebuffer panic-format barcode decodes to the prefix **`%s at pc 0x%016l`**, matching XNU's generic ARM64 saved-state panic path in `sleh.c`. The photo did not expose a readable PC/LR/ESR/FAR.
 - Comparison with the device-proven A5XELTE port found an extremely close precedent: its first populated iOS USERDATA boot reached launchd and then took a kernel data abort in `accelerate_entitlement_queries` because the donor AMFI interface registration was guarded for SWEET only.
 
-### J3XNU042 — current build/package, NOT YET PHYSICALLY TESTED
+### J3XNU042 physical result — VERIFIED
 
-- J3XNU042 is **patch `0146-j3y17lte-amfi-bridge.patch`**.
-- After two rejected broad/stale donor attempts, the final patch was deliberately reduced to only the two functional board-guard changes actually needed by this tree:
-  1. build/register `bsd/kern/sweet_amfi.c` for `ARM64_BOARD_CONFIG_J3Y17LTE` as well as SWEET;
-  2. call `sweet_amfi_policy_register()` for J3 in `bsd_init.c`.
-- `SweetEntitlements.cpp` needs no J3-specific hunk because `J3Y17LTE.h` already defines `SWEET 1`, so its existing `#if defined(SWEET)` path is compiled.
-- Final J3XNU042 code commit: **`4b5efee714772b0d640bc98331dbf593570b0d1b`**.
-- User downloaded the successful artifact as **`j3y17lte-xnu-kernel (19).tgz`**.
-- Artifact validation:
-  - `SHA256SUMS`: OK
-  - Mach-O 64-bit arm64
-  - kernel SHA256: **`dd6e4ae55531adac34472a730151a6ac85cacf48683e1f05cc83feb42f7633d9`**
-  - embedded strings present:
-    - `SWEET AMFI: built-in interface registered (XML entitlements)`
-    - `SWEET AMFI: platform binary policy %s (%d)`
-    - `SWEET Sandbox: permissive policy %s (%d)`
-    - `J3Y17LTE eMMC: /dev/emmcroot0 ready, GPT %s read-only`
-  - old LSE `LDADD` byte pattern `28 01 28 f8`: **0 occurrences**.
-- J3XNU042 was packaged with the same userland/read-only boot args above:
-  - recovery image SHA256: **`2578482adb43d188ae8f12efce988ed1307c1746d02a81f31d96e0152f7e3d81`**
-  - Odin tar SHA256: **`3f1864d6149f1287fce5faab7d32fc2d2aecd0076f3f29b1ca5cef90ec1d44de`**
-  - Windows path: **`C:\Users\BalJai\Downloads\recovery-j3xnu042-userland-ro-odin.tar`**
-  - package status at this handoff: **NOT FLASHED**.
-- **Next action:** physically test J3XNU042 through the established RECOVERY-only Odin AP workflow. Do not rebuild. On boot, first look for the AMFI registration line before `/sbin/launchd`, then photograph any later console/panic.
-- If AMFI registration appears and the previous ~30-second generic ARM64 panic disappears, the next likely blocker is the **known A5XELTE 4 KiB kernel vs iOS 16 KiB CodeDirectory/shared-cache registration issue**. Do not patch it pre-emptively: verify J3's runtime first.
-- The A5 precedent after AMFI was: dyld starts inside PID1, shared-cache code signature registration fails because the CodeDirectory page shift is 14 (16 KiB) while the non-Apple kernel uses 4 KiB VM pages. A5 fixed that in its patch0107 and added `cs_enforcement_disable=1`. This is a useful map, **not yet proven to be J3's next failure**.
+- J3XNU042 kernel/package from artifact `j3y17lte-xnu-kernel (19).tgz` was physically flashed/tested through the established RECOVERY-only Odin AP workflow.
+- Kernel SHA256: `dd6e4ae55531adac34472a730151a6ac85cacf48683e1f05cc83feb42f7633d9`.
+- Recovery image SHA256: `2578482adb43d188ae8f12efce988ed1307c1746d02a81f31d96e0152f7e3d81`.
+- Odin TAR SHA256: `3f1864d6149f1287fce5faab7d32fc2d2aecd0076f3f29b1ca5cef90ec1d44de`.
+- The AMFI bridge worked: the previous launchd-stage generic ARM64 panic moved forward into dyld/shared-cache handling.
+- Physical console evidence now shows the exact next blocker:
+  - `disallowing unsupported code signature page shift: 14`
+  - `unable to create a validated cs_blob object: 85`
+  - dyld reports code-signature registration for the shared cache failed
+  - `Library not loaded: /usr/lib/libSystem.B.dylib`
+  - PID 1 (`/sbin/launchd`) exits because the dyld shared cache could not be registered.
+- This matches the A5XELTE port's previously device-verified 4 KiB-kernel vs 16 KiB iOS shared-cache CodeDirectory failure nearly exactly. Therefore the AMFI-null-pointer hypothesis for J3XNU041 was correct enough to move execution into real dyld processing.
+- The second J3XNU042 photo is a panic/terminal state after PID1 exits; the useful root cause is already printed in plain text above it. No further panic-barcode decoding is needed for this revision.
+- Root mount remains verified read-only and unchanged. The coredump path also fails with error 30 (`EROFS`), which is expected with the current read-only root and is not the immediate blocker.
+
+### J3XNU043 — 16 KiB dyld shared-cache compatibility
+
+- New patch: `xnu/patches/0147-j3y17lte-4k-unsigned-dyld-cache.patch`.
+- Code commit: **`484c8c840f0079a1f5e5e889772651fcf29f34d9`**.
+- It is adapted directly from the A5XELTE port's device-proven `0107-a5xelte-4k-unsigned-dyld-cache.patch`; the only semantic adaptation is `ARM64_BOARD_CONFIG_A5XELTE -> ARM64_BOARD_CONFIG_J3Y17LTE`.
+- Changes:
+  1. `bsd/kern/ubc_subr.c`: accept CodeDirectory page shift 14 (16 KiB) on J3.
+  2. J3-only `cs_validate_page()` early return avoids trying to hash a 16 KiB code-signature unit from a 4 KiB VM page during this lab bring-up.
+  3. `osfmk/vm/vm_shared_region.c`: disable code-signing enforcement for the J3 shared-region map, matching the proven A5 lab workaround.
+- Pre-push validation:
+  - all existing J3 patches were checked for touches to `bsd/kern/ubc_subr.c` and `osfmk/vm/vm_shared_region.c`: **none touch either file**;
+  - A5's earlier 4 KiB patches 0082/0084 also do not touch either target file;
+  - upstream XNU `rel/xnu-8796` contexts match the A5 patch;
+  - all four unified-diff hunk counts were mechanically checked and passed.
+- Next packaging boot args must add **`cs_enforcement_disable=1`** to the existing J3XNU042 userspace/read-only args:
+  `debug=0xc cpus=1 keepsyms=1 -noprogress -v -enable_kprintf_spam rd=emmcroot0 emmcroot=USERDATA launchdsuffix=release unentitled_ios_sim_launch=1 ignition_level=1 launchd_unsecure_cache=1 wdt_test=no_user_checkin wdt=-1 cs_enforcement_disable=1`
+- Do **not** add `rootrw` or `emmcwrite=1` yet. The expected next milestone is dyld successfully registering/loading the shared cache and launchd reaching its own boot tasks.
+- A5's next proven blocker after passing this stage was launchd's mount-phase requiring writable root access. That is a likely future J3 issue but is **not yet proven on J3**; do not enable writes pre-emptively.
+
 
 ### CI / patch discipline — CURRENT USER REQUIREMENT
 
