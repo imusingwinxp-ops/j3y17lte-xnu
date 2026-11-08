@@ -35,6 +35,18 @@
 - **Current J3XNU045 status:** kernel, ADT and package are verified; physical display-service registration, system-boot completion and SpringBoard spawn authorization are verified. Actual SpringBoard/backboardd survival and a GUI swap remain unproven.
 - **Best zero-CI next diagnostic:** repackage the same J3XNU045 kernel with only `j3fb_noconsole=1`. The console-mute flag is checked on the first actual framebuffer SwapEnd path, so if the console never mutes then no swap reached AppleCLCD; if it mutes, the swap path ran and the resulting visible frame/black/garbled output becomes the next evidence. Panics retain the existing J3 diagnostics. Do not build J3XNU046 merely for this test.
 - **J3XNU045 no-console repack VERIFIED:** same kernel and ADT, boot args additionally include only `j3fb_noconsole=1`.
+## J3XNU047 — HFS atomic RENAME_SWAP compatibility (Apple-logo attempt)
+
+- **Purpose:** use the final available build on the exact donor change that moved A5XELTE from the same post-SpringBoard/no-swap stage to its first photographed white Apple logo and recorded framebuffer swaps.
+- **Patch:** `0151-j3y17lte-hfs-rename-swap.patch`.
+- **Change:** widen the existing SWEET-only guard around the already-present HFS `VFS_RENAME_SWAP` fallback in `bsd/vfs/kpi_vfs.c` to include `ARM64_BOARD_CONFIG_J3Y17LTE`. The fallback itself is unchanged: only when `VNOP_RENAME` returns `ENOTSUP`, the request is exactly `VFS_RENAME_SWAP`, both vnodes are regular files, and both are on the same mount, use `VNOP_EXCHANGE(*fvpp, *tvpp, 0, ctx)`.
+- **Why this build:** donor A5XELTE observed `usermanagerd` atomic persona/session writes failing with ENOTSUP, then enabled the same pre-existing SWEET fallback in patch0117. The next physical run produced the first white Apple logo; its recovered log later showed `exec SpringBoard`, `exec backboardd`, display-on and five BGRA swaps. This is precedent, not a guarantee that J3 will behave identically.
+- **J3XNU046 evidence:** J3 reaches `Early boot complete`, `exec SpringBoard`, heavy xpcproxy/service churn, and bounded crash diagnostics. The supplied captures show a `driverkitd` SIGKILL, but no captured SpringBoard/backboardd crash reason and still no framebuffer SwapEnd.
+- **Lexical audit / preflight:** among HFS/VFS-related project patches, only patch0052 touches `bsd/vfs/kpi_vfs.c`; patch0026/0041 do not. Later J3 root/HFS/write/display/crash patches 0143/0144/0145/0148/0149/0150 do not touch this file. Pinned Apple `rel/xnu-8796` `kpi_vfs.c` was reconstructed by applying patch0052; the proposed J3 guard replacement matched exactly once and preserved the existing ENOTSUP/VFS_RENAME_SWAP/VNOP_EXCHANGE safety conditions.
+- **No other behavior changes:** no framebuffer geometry, eMMC bounds, AMFI, dyld, root image, or crash-diagnostic logic changes.
+- **Expected best-case physical result:** first AppleCLCD SwapEnd(s) and a visible white Apple logo. Package the same kernel with `j3fb_noconsole=1` for the physical trial so console muting itself proves the first swap occurred.
+- **Status:** source commit prepared; allow exactly one CircleCI build and do not manually rerun.
+
 ## J3XNU046 — bounded userland crash diagnostics
 
 - **Purpose:** spend one build only to identify the concrete process failure preventing the first IOMobileFramebuffer SwapEnd. J3XNU045 already proves AppleCLCD registration, MobileGestalt framebuffer queries, SpringBoard spawn authorization and full-system launchd progress, but the no-console trial proves no observed SwapEnd.
