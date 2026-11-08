@@ -23,7 +23,17 @@
   - Odin TAR SHA256: **`2e671b134bfed07921bbbea5eaedfa4151277e98dfec2945d6227a49f654b12a`**
   - Windows package: **`C:\\Users\\BalJai\\Downloads\\recovery-j3xnu045-odin.tar`**
   - TAR contains exactly `recovery.img`.
-- **Status:** J3XNU045 is checksum-verified, ADT-verified, packaged and **NOT YET FLASHED**. No extra CI build is needed for the first physical test.
+- **J3XNU045 physical test VERIFIED, 2026-11-08 ~22:32–22:33 UK:** the supplied photo sequence shows the new display bridge running on the real J3:
+  - `SWEET SURF: IOCoreSurfaceRoot registered`.
+  - `SWEET FB: AppleCLCD 720x1280 stride 2880 at 0x67000000` with default surface 1 created/published. This proves AppleCLCD/IOSurface registration and the exact J3 scanout geometry; the default surface is not itself proof of a SpringBoard-rendered frame.
+  - launchd progresses through many boot tasks and prints **`Early boot complete. Continuing system boot.`**
+  - launchd authorizes a real **SpringBoard** spawn: `Allowing spawn of iOS binary SpringBoard ...`.
+  - many later services are also attempted, including xpcproxy, bluetoothd, identityservicesd, imagent, ReportCrash, fseventsd, DumpPanic, nfcd, mobiletimerd, AppleCredentialManagerDaemon, timed, thermalmonitord, tccd, nehelper and MobileGestaltHelper.
+  - framebuffer userspace interaction is now device-proven: `SWEET FB: MobileGestaltHelper sel 8 ... -> 0x0` and `sel 28 ... -> 0x0`. In the existing SweetFramebuffer ABI, selector 8 is GetDisplaySize and selector 28 is GetDotPitch. So iOS userspace successfully opens the IOMobileFramebuffer client and queries J3 display properties.
+  - the same sequence also contains non-fatal/secondary messages including BindFS lookup failures, unsupported Data Protection on `/private/var/`, and a `GetMasterBlock: Error 16 opening /dev/emmcroot0` during one mount task; launchd continues beyond all of these into full system boot.
+  - **No submitted J3XNU045 capture contains the existing `SWEET FB: swap ...` log from `AppleCLCD::swap()`, and no real iOS UI frame is visible.** Do not treat the default surface, SpringBoard spawn authorization, or Samsung splash as a successful GUI frame.
+- **Current J3XNU045 status:** kernel, ADT and package are verified; physical display-service registration, system-boot completion and SpringBoard spawn authorization are verified. Actual SpringBoard/backboardd survival and a GUI swap remain unproven.
+- **Best zero-CI next diagnostic:** repackage the same J3XNU045 kernel with only `j3fb_noconsole=1`. The console-mute flag is checked on the first actual framebuffer SwapEnd path, so if the console never mutes then no swap reached AppleCLCD; if it mutes, the swap path ran and the resulting visible frame/black/garbled output becomes the next evidence. Panics retain the existing J3 diagnostics. Do not build J3XNU046 merely for this test.
 - **First boot:** retain proven J3XNU044 args including `rd=emmcroot0 emmcroot=USERDATA emmcwrite=1 cs_enforcement_disable=1 -noprogress`, keep `rootrw` absent, and retain verbose console (no `j3fb_noconsole=1` on first trial). If AppleCLCD is confirmed but text overwrites a UI frame, repackage the same kernel with `j3fb_noconsole=1` without another CI build.
 - No USERDATA image rewrite, Android boot, BL/CP/CSC/PIT flash, partition resizing or broader eMMC write permission is required for this patch. SpringBoard and rendered UI remain unproven on J3.
 
