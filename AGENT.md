@@ -34,6 +34,12 @@
   - **No submitted J3XNU045 capture contains the existing `SWEET FB: swap ...` log from `AppleCLCD::swap()`, and no real iOS UI frame is visible.** Do not treat the default surface, SpringBoard spawn authorization, or Samsung splash as a successful GUI frame.
 - **Current J3XNU045 status:** kernel, ADT and package are verified; physical display-service registration, system-boot completion and SpringBoard spawn authorization are verified. Actual SpringBoard/backboardd survival and a GUI swap remain unproven.
 - **Best zero-CI next diagnostic:** repackage the same J3XNU045 kernel with only `j3fb_noconsole=1`. The console-mute flag is checked on the first actual framebuffer SwapEnd path, so if the console never mutes then no swap reached AppleCLCD; if it mutes, the swap path ran and the resulting visible frame/black/garbled output becomes the next evidence. Panics retain the existing J3 diagnostics. Do not build J3XNU046 merely for this test.
+- **J3XNU045 no-console repack VERIFIED:** same kernel and ADT, boot args additionally include only `j3fb_noconsole=1`.
+  - recovery SHA256: **`5d01c897cba746897ed8f5ef2965e48378bda0b960273d62d702eed2e2d101cb`**
+  - Odin TAR SHA256: **`15c23debd82ffc62350a2b0b611b26bd13a24da6bfdb2c560724fce82fd5c304`**
+  - Windows package: **`C:\\Users\\BalJai\\Downloads\\recovery-j3xnu045-noconsole-odin.tar`**
+  - recovery size: **16906256 bytes**, Samsung `SEANDROIDENFORCE` trailer preserved, TAR contains exactly `recovery.img`.
+  - Status: **NOT YET FLASHED** at time of this update.
 - **First boot:** retain proven J3XNU044 args including `rd=emmcroot0 emmcroot=USERDATA emmcwrite=1 cs_enforcement_disable=1 -noprogress`, keep `rootrw` absent, and retain verbose console (no `j3fb_noconsole=1` on first trial). If AppleCLCD is confirmed but text overwrites a UI frame, repackage the same kernel with `j3fb_noconsole=1` without another CI build.
 - No USERDATA image rewrite, Android boot, BL/CP/CSC/PIT flash, partition resizing or broader eMMC write permission is required for this patch. SpringBoard and rendered UI remain unproven on J3.
 
