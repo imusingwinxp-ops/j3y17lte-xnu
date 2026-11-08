@@ -47,7 +47,17 @@
 - **Strict preflight:** the final patch blob was applied exactly (no fuzz) to reconstructed post-chain `IOKitBSDInit.cpp`, `KernelConfigTables.cpp`, and `SweetHID.cpp`; `bsd/conf/files` had already passed the same strict apply before unrelated hunk-header corrections. New driver header count matches all 647 added source lines and source trailing-whitespace count is zero.
 - **Expected physical test:** package with the proven J3XNU047 boot args including `j3fb_noconsole=1`. Home/volume should emit native consumer-control HID events; TD4100 tap/swipe should emit digitizer events and make the lock screen interactive.
 - **CI correction:** the first J3XNU048 attempt failed before compilation because the SweetHID hunk at patch line 70 declared +24 lines but contained +27. Header-only repair: +24→+27; downstream new-start coordinates 474→477 and 488→491. All patch hunk counts validate after repair; SweetHID strict-apply passes.
-- **Status:** corrected source committed for one automatic CircleCI retry. Do not manually rerun.
+- **Build status:** corrected J3XNU048 commit `51f24e0c5404e9900d0cd307094d7c74a2a52569` passed CircleCI #47.
+- **J3XNU048 artifact/package VERIFIED:**
+  - kernel SHA256: **`1c920a362a49557177090dd6b54a1d5d39dbe84cd476129a6da6e23d0fe27065`**
+  - payload Mach-O size: **16528320 bytes**, entry `0xfffffff007414488`
+  - recovery size: **16908304 bytes**, Samsung `SEANDROIDENFORCE` trailer preserved
+  - recovery SHA256: **`498d9eed276395c2a0ecb95d9a4c607651f9e2abcbe7b679a2b6aa9cb3db0c27`**
+  - Odin TAR SHA256: **`14092e50595c8ff38509d25800832b9b753d0aa462cb29e65f5d04e112c51e69`**
+  - Windows package: **`C:\\Users\\BalJai\\Downloads\\recovery-j3xnu048-touch-buttons-odin.tar`**
+  - embedded J3 input strings verified: keys online/change logging, TD4100 ACK, TD4100 RMI ready/retry, SweetHID touch/buttons registration.
+  - prior boot features verified: AMFI bridge, writable J3 eMMC root string, J3 AppleCLCD personality, `j3fb_noconsole`; old LDADD byte-pattern count remains **0**.
+  - Status: **PACKAGED, NOT YET FLASHED** at time of this update.
 
 ## J3XNU047 — HFS atomic RENAME_SWAP compatibility (Apple-logo attempt)
 
