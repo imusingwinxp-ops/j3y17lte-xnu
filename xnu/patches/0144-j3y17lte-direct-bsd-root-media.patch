@@ -1,7 +1,7 @@
 diff --git a/iokit/Kernel/IOService.cpp b/iokit/Kernel/IOService.cpp
 --- a/iokit/Kernel/IOService.cpp
 +++ b/iokit/Kernel/IOService.cpp
-@@ -5128,7 +5128,7 @@ IOService::publishHiddenMedia(IOService * parent)
+@@ -5128,6 +5128,6 @@ IOService::publishHiddenMedia(IOService * parent)
  
  	iomediaClass = OSMetaClass::getMetaClassWithName(gIOMediaKey);
 -#if !defined(ARM64_BOARD_CONFIG_SWEET)
