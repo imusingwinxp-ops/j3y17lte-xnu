@@ -67,7 +67,7 @@
  class SweetHIDTouch : public IOHIDEventService {
  	OSDeclareDefaultStructors(SweetHIDTouch);
  public:
-@@ -432,16 +440,24 @@
+@@ -432,16 +440,27 @@
  	if (!fLock || !IOHIDEventService::start(provider)) {
  		return false;
  	}
@@ -95,7 +95,7 @@
  	gSweetTouch = this;
  	registerService();
  	IOLog("SWEET HID: touch registered\n");
-@@ -458,12 +474,12 @@
+@@ -458,12 +477,12 @@
  	if (finger < 0 || finger >= SWEET_TOUCH_FINGERS) {
  		return;
  	}
@@ -111,7 +111,7 @@
  	IOFixed nx = (IOFixed)(((int64_t)(x + fOffX) << 16) / fLogicalW);
  	IOFixed ny = (IOFixed)(((int64_t)(y + fOffY) << 16) / fLogicalH);
  	bool moved = down && (nx != fX[finger] || ny != fY[finger]);
-@@ -472,8 +488,8 @@
+@@ -472,8 +491,8 @@
  		return;
  	}
  	if (!was && down) {

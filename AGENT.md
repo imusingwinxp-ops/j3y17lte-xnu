@@ -46,7 +46,8 @@
 - **Full lexical audit:** all existing patches were scanned for `bsd/conf/files`, `iokit/bsddev/IOKitBSDInit.cpp`, `iokit/KernelConfigTables.cpp`, and `iokit/Kernel/arm/hid/SweetHID.cpp`. Relevant later overlaps were reconstructed: patch0142 J3 eMMC in files/IOKitBSDInit and patch0149 J3 AppleCLCD in KernelConfigTables; patches0150/0151 do not overlap.
 - **Strict preflight:** the final patch blob was applied exactly (no fuzz) to reconstructed post-chain `IOKitBSDInit.cpp`, `KernelConfigTables.cpp`, and `SweetHID.cpp`; `bsd/conf/files` had already passed the same strict apply before unrelated hunk-header corrections. New driver header count matches all 647 added source lines and source trailing-whitespace count is zero.
 - **Expected physical test:** package with the proven J3XNU047 boot args including `j3fb_noconsole=1`. Home/volume should emit native consumer-control HID events; TD4100 tap/swipe should emit digitizer events and make the lock screen interactive.
-- **Status:** source committed for exactly one CircleCI build. Do not manually rerun.
+- **CI correction:** the first J3XNU048 attempt failed before compilation because the SweetHID hunk at patch line 70 declared +24 lines but contained +27. Header-only repair: +24→+27; downstream new-start coordinates 474→477 and 488→491. All patch hunk counts validate after repair; SweetHID strict-apply passes.
+- **Status:** corrected source committed for one automatic CircleCI retry. Do not manually rerun.
 
 ## J3XNU047 — HFS atomic RENAME_SWAP compatibility (Apple-logo attempt)
 
