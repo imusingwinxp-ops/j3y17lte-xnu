@@ -2,9 +2,9 @@
 
 **Read this entire file before changing anything.** This is a status handoff for the user's active Samsung Galaxy J3 (2017) / Exynos 7570 XNU bring-up. It is not proof that iOS boots. The user calls the phone "J3", refers to the project as "J3XNU", and prefers short, accurate, test-backed steps. The user has repeatedly incurred unnecessary CircleCI credits from failed patch preflights and is particularly concerned about avoiding another failed CI run.
 
-**As of 2026-11-08:** the port has advanced far beyond the old MACH_IPC/LSE stage. The physical SM-J330FN now boots XNU, reads the real Exynos7570 eMMC, selects GPT USERDATA as a read-only BSD root, mounts a genuine iOS 16.7.16 HFSX root, bypasses the expected unsealed-root authentication failure for this lab port, and reaches the first real `/sbin/launchd` exec attempt. This is real root-filesystem and process-1 bring-up evidence, but it is **not yet proof that launchd completed startup, SpringBoard ran, or iOS rendered a frame**. J3XNU042 has compiled and been packaged but has **not yet been physically flashed/tested**. The user explicitly wants CI credits conserved: do not create another code build until J3XNU042 physical evidence gives a decision point.
+**As of 2026-11-08:** the physical SM-J330FN now boots XNU from RECOVERY, mounts the verified iOS 16.7.16 HFSX USERDATA root, executes real PID 1, passes the iOS 16 KiB dyld shared-cache registration blocker, and reaches launchd's boot-task phase. J3XNU043 physically printed `Darwin Bootstrapper Version 7.0.0`, spawned `fsck`, and then hit the expected next blocker when `mount_hfs` tried to reopen/remount `/dev/emmcroot0` writable while the J3 eMMC driver was still read-only. J3XNU044 is the current code candidate: a tightly gated USERDATA-only CMD24 write path adapted from the device-proven A5XELTE patch0108. It is not yet physically tested. SpringBoard has still not been observed and no real iOS UI frame has been rendered.
 
-## J3XNU042 active handoff — 2026-11-08 (supersedes all earlier active handoffs)
+## J3XNU044 active handoff — 2026-11-08 (supersedes all earlier active handoffs)
 
 ### Physical storage / iOS root state — VERIFIED
 
@@ -71,35 +71,75 @@
 - The second J3XNU042 photo is a panic/terminal state after PID1 exits; the useful root cause is already printed in plain text above it. No further panic-barcode decoding is needed for this revision.
 - Root mount remains verified read-only and unchanged. The coredump path also fails with error 30 (`EROFS`), which is expected with the current read-only root and is not the immediate blocker.
 
-### J3XNU043 — 16 KiB dyld shared-cache compatibility
+### J3XNU043 physical result — VERIFIED
 
-- Patch: `xnu/patches/0147-j3y17lte-4k-unsigned-dyld-cache.patch`.
-- Original semantic code commit: **`484c8c840f0079a1f5e5e889772651fcf29f34d9`**.
-- It is adapted directly from the A5XELTE port's device-proven `0107-a5xelte-4k-unsigned-dyld-cache.patch`; the semantic adaptation remains `ARM64_BOARD_CONFIG_A5XELTE -> ARM64_BOARD_CONFIG_J3Y17LTE`.
-- Intended changes remain:
-  1. `bsd/kern/ubc_subr.c`: accept CodeDirectory page shift 14 (16 KiB) on J3.
-  2. J3-only `cs_validate_page()` early return avoids trying to hash a 16 KiB code-signature unit from a 4 KiB VM page during this lab bring-up.
-  3. `osfmk/vm/vm_shared_region.c`: disable code-signing enforcement for the J3 shared-region map, matching the proven A5 lab workaround.
-- **CircleCI build #40 failed before producing a usable J3XNU043 artifact. Do not rerun it.**
-- Root cause of that failed attempt was the patch **format**, not a newly observed device/runtime failure:
-  - donor patch 0107 is a zero-context unified diff;
-  - the J3 CircleCI preflight deliberately runs plain `git apply --check` followed by plain `git apply`;
-  - reproducing the committed 0147 locally against the exact XNU 8796 target context fails under plain `git apply --check`, while `--unidiff-zero` accepts it;
-  - weakening CI with `--unidiff-zero` is intentionally rejected because this project requires contextual patch validation.
-- **Correction:** 0147 has now been regenerated from actual XNU 8796 before/after text with normal context around every edit. Semantics are unchanged.
-- Correction preflight completed before the corrective push:
-  - upstream `rel/xnu-8796` context for all three edit sites was fetched and matched;
-  - the previous full-chain audit established no earlier J3 patch modifies `bsd/kern/ubc_subr.c` or `osfmk/vm/vm_shared_region.c`, so their pre-0147 state is upstream XNU 8796;
-  - the contextual diff was generated mechanically from before/after content rather than hand-counting hunk sizes;
-  - plain `git apply --check`: **PASS**;
-  - actual `git apply`: **PASS**;
-  - `git diff --check`: **PASS**;
-  - resulting files exactly match the intended donor-adapted after-state.
-- The contextual 0147 correction and this AGENT.md update are committed atomically so only one new real CircleCI build is triggered.
-- Next packaging boot args must add **`cs_enforcement_disable=1`** to the existing J3XNU042 userspace/read-only args:
-  `debug=0xc cpus=1 keepsyms=1 -noprogress -v -enable_kprintf_spam rd=emmcroot0 emmcroot=USERDATA launchdsuffix=release unentitled_ios_sim_launch=1 ignition_level=1 launchd_unsecure_cache=1 wdt_test=no_user_checkin wdt=-1 cs_enforcement_disable=1`
-- Do **not** add `rootrw` or `emmcwrite=1` yet. The expected next physical milestone is dyld successfully registering/loading the shared cache and launchd reaching its own boot tasks.
-- A5's next proven blocker after passing this stage was launchd's mount-phase requiring writable root access. That is a likely future J3 issue but is **not yet proven on J3**; do not enable writes pre-emptively.
+- Corrected J3XNU043 source commit: **`bf218d33d4ffc0787670c0047615c04a370e22dc`**.
+- CircleCI build **#41 succeeded**.
+- User downloaded the successful artifact as **`j3y17lte-xnu-kernel (20).tgz`**.
+- Artifact/package verification supplied by the user:
+  - `SHA256SUMS`: OK
+  - Mach-O 64-bit arm64
+  - kernel SHA256: **`5edbe10317a96b62ee8ba2bd50eae7056e5447a906fb8f4f3a14bd6d7d740d86`**
+  - old LSE `28 01 28 f8` occurrence count: **0**
+  - recovery SHA256: **`1bff0b74327e847be8f65af296ba910e2ce0834d94d3d65abefdc09db4759673`**
+  - Odin TAR SHA256: **`2030196e37a45a434e153ac31b68282ee45c086656fdf7cd7179e168e4f65581`**
+  - package: `C:\Users\BalJai\Downloads\recovery-j3xnu043-userland-ro-odin.tar`
+  - boot args included `cs_enforcement_disable=1`; eMMC writes were still disabled.
+- Four physical photos from one J3XNU043 boot, taken moments apart, establish the sequence:
+  1. normal J3 XNU/platform bring-up;
+  2. HFS metadata/hardlink activity on `iOSRoot`;
+  3. real launchd execution with **`Darwin Bootstrapper Version 7.0.0`**, the expected J3XNU043 boot args, `Doing boot task`, and launchd authorizing `fsck`;
+  4. the mount task fails with:
+     - `GetMasterBlock: Error 16 opening /dev/emmcroot0`
+     - `mount_hfs: error on mount(): error = -1`
+     - **`mount_hfs: Read-only file system`**
+     - `mount: / failed with 1`
+     - then `mount[3] exited` / coredump handling.
+- Therefore the J3XNU042 shared-cache error (`page shift: 14`, no dyld cache, missing libSystem) is **passed**. This is genuine PID1/launchd boot-task progress, not merely a colourful framebuffer milestone.
+- The coredump `error 30` remains expected while the root is read-only and is secondary to the mount failure.
+- The visible BindFS lookup failure under `/private/preboot/.../usr/standalone/firmware` occurs after the mount failure and is not the first blocker to solve.
+
+### J3XNU044 — gated writable USERDATA trial
+
+- New patch: **`xnu/patches/0148-j3y17lte-userdata-write.patch`**.
+- Runtime evidence now proves writes are required: launchd's mount phase explicitly fails because `/dev/emmcroot0` is read-only. This satisfies the earlier rule not to enable writes prematurely.
+- Device-proven donor precedent is A5XELTE **`0108-a5xelte-userdata-write.patch`**, which immediately followed its identical `Bootstrapped Version 7.0.0` / `mount_hfs: Read-only file system` milestone.
+- J3-specific hardware assumptions were independently checked against Samsung's exact J3Y17LTE kernel source before adapting the donor:
+  - `dwmmc0@13540000` has **`fifo-depth = <0x40>`** (64 entries);
+  - `exynos7570-j3y17lte_defconfig` has **`CONFIG_MMC_DW_FORCE_32BIT_SFR_RW=y`**;
+  - these match the donor's CMD24 PIO/FIFO assumptions and the J3's already-proven CMD17 paired-32-bit read path.
+- J3XNU044 adds:
+  1. polled single-sector eMMC **CMD24** writes;
+  2. paired 32-bit FIFO writes for the J3's 64-bit FIFO unit;
+  3. existing mutex serialization plus read-modify-write for partial 512-byte sectors;
+  4. writable BSD-device reporting only when the write gate is active.
+- J3 adds stricter safety gates than the donor:
+  - `emmcwrite=1` is mandatory;
+  - selected GPT partition must be exactly `USERDATA`;
+  - verified J3 USERDATA geometry must exactly match **first LBA 6713344, sectors 24051712**;
+  - the strategy path still bounds every request to the selected partition;
+  - `emmc_write_sector()` independently rejects any absolute LBA outside the selected USERDATA range;
+  - default `SYSTEM` selection remains read-only.
+- Patch-chain audit:
+  - `0142` created `bsd/dev/j3y17lte_emmc.c`;
+  - `0143` through `0147` were inspected and do not modify that file;
+  - therefore the exact pre-0148 state is the 487-line file introduced by 0142.
+- Mechanical pre-push validation:
+  - reconstructed those exact 487 source lines from the cumulative patch chain;
+  - generated the 0148 contextual diff from actual before/after text;
+  - 13 contextual hunks;
+  - independent apply/check simulation: **PASS**;
+  - generated after-state exactly matches the intended 619-line target;
+  - added-line whitespace / `git diff --check` equivalent: **PASS**;
+  - USERDATA-name, exact-geometry, write-bootarg, CMD24, FIFO-depth, paired-32-bit and per-LBA bounds invariants: **PASS**.
+- First J3XNU044 package should keep the successful J3XNU043 args and add only **`emmcwrite=1`**:
+  `debug=0xc cpus=1 keepsyms=1 -noprogress -v -enable_kprintf_spam rd=emmcroot0 emmcroot=USERDATA launchdsuffix=release unentitled_ios_sim_launch=1 ignition_level=1 launchd_unsecure_cache=1 wdt_test=no_user_checkin wdt=-1 cs_enforcement_disable=1 emmcwrite=1`
+- **Do not add `rootrw` on the first J3XNU044 test.** The proven failure is the block device refusing writable open during launchd's mount task; A5's patch0108 milestone was solved by enabling the device write path. If J3 then proves a separate root-mount flag blocker, the same kernel can be repackaged with `rootrw=1` without another CI build.
+- This is the first J3 XNU candidate intentionally capable of mutating the iOS USERDATA root. The verified host image `~/ios-j330fn/rootbuild/20H392/ios16-j3-reduced-20H392.img` remains the restore source; do not write any partition outside the GPT-bounded USERDATA path.
+- Expected next physical evidence:
+  - early eMMC line should say `GPT USERDATA ... writable`;
+  - no `mount_hfs: Read-only file system`;
+  - either launchd advances into broader service startup (A5 precedent) or a new concrete CMD24/HFS/userspace error becomes the next blocker.
 
 ### CI / patch discipline — CURRENT USER REQUIREMENT
 
@@ -113,7 +153,7 @@
   - assuming a donor patch's line numbers/guards still matched J3's cumulative tree.
 - For any next patch: inspect all earlier patches touching the same target file; reconstruct the post-chain text; generate the diff rather than hand-counting hunk sizes; run `git apply --check`, apply it, and run `git diff --check` before a code push.
 - Do **not** rewrite USERDATA or rebuild the iOS root for the current AMFI/dyld issues. The installed root is already full-readback verified.
-- Do **not** enable eMMC writes/rootrw merely to get farther unless a concrete userspace failure proves write access is required and the change is separately bounded/tested.
+- J3XNU043 has now provided the concrete userspace proof that writable USERDATA is required at launchd mount-phase. J3XNU044 therefore enables only the separately bounded, opt-in USERDATA write path above. Do not broaden writes beyond those gates or add `rootrw` until runtime evidence requires it.
 - TWRP can be restored to RECOVERY without touching the iOS root, but never format/mount/repair Android `/data`.
 - Never flash BL/CP/CSC/PIT or repartition. The established experiment is RECOVERY-only plus the already-completed USERDATA root install.
 
