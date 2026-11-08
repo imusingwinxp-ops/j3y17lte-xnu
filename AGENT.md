@@ -46,6 +46,12 @@
 - **No other behavior changes:** no framebuffer geometry, eMMC bounds, AMFI, dyld, root image, or crash-diagnostic logic changes.
 - **Expected best-case physical result:** first AppleCLCD SwapEnd(s) and a visible white Apple logo. Package the same kernel with `j3fb_noconsole=1` for the physical trial so console muting itself proves the first swap occurred.
 - **Build status:** CircleCI #45 passed for commit `57a664e430bfd78f44f2868a56b9c969d01a5ee8`.
+- **J3XNU047 PHYSICAL MILESTONE — FIRST WHITE APPLE LOGO, 2026-11-08 ~23:13 UK:** user-supplied photo sequence proves the first real post-console iOS framebuffer presentation on the J3.
+  - Before the transition the console shows continued iOS userland startup, including `exec backboardd`, `exec bluetoothd`, `exec identityservicesd`, `exec mobiletimerd`, `exec imagent`, `exec MobileGestaltHelper`, `exec ReportCrash`, `exec tccd`, and many other services.
+  - The package was booted with `j3fb_noconsole=1`. The console subsequently disappears and the display becomes black with a centered **white Apple logo**. Because J3's console mute is only armed on the AppleCLCD SwapEnd path, this is device proof that a real framebuffer swap occurred.
+  - This supersedes all earlier “no SwapEnd” states from J3XNU045/046.
+  - The photo proves a rendered Apple-logo frame and working presentation path; it does **not** yet prove that SpringBoard reaches an interactive lock/home screen or that the system is not stalled after that frame.
+  - No additional CI build is required to distinguish “stuck” from “slow”: repackage the same verified J3XNU047 kernel without `j3fb_noconsole=1` and observe post-logo console activity, or leave the Apple-logo build running and test later visible transition. Do not modify USERDATA/eMMC bounds for this diagnostic.
 - **J3XNU047 artifact/package VERIFIED:**
   - kernel SHA256: **`b7cc84351d8c81d011aef05d638b3c10edffa21183ed0265957e385d51ceb68a`**
   - payload Mach-O size: **16527408 bytes**, entry `0xfffffff007414488`
