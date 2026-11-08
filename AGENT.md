@@ -73,23 +73,33 @@
 
 ### J3XNU043 — 16 KiB dyld shared-cache compatibility
 
-- New patch: `xnu/patches/0147-j3y17lte-4k-unsigned-dyld-cache.patch`.
-- Code commit: **`484c8c840f0079a1f5e5e889772651fcf29f34d9`**.
-- It is adapted directly from the A5XELTE port's device-proven `0107-a5xelte-4k-unsigned-dyld-cache.patch`; the only semantic adaptation is `ARM64_BOARD_CONFIG_A5XELTE -> ARM64_BOARD_CONFIG_J3Y17LTE`.
-- Changes:
+- Patch: `xnu/patches/0147-j3y17lte-4k-unsigned-dyld-cache.patch`.
+- Original semantic code commit: **`484c8c840f0079a1f5e5e889772651fcf29f34d9`**.
+- It is adapted directly from the A5XELTE port's device-proven `0107-a5xelte-4k-unsigned-dyld-cache.patch`; the semantic adaptation remains `ARM64_BOARD_CONFIG_A5XELTE -> ARM64_BOARD_CONFIG_J3Y17LTE`.
+- Intended changes remain:
   1. `bsd/kern/ubc_subr.c`: accept CodeDirectory page shift 14 (16 KiB) on J3.
   2. J3-only `cs_validate_page()` early return avoids trying to hash a 16 KiB code-signature unit from a 4 KiB VM page during this lab bring-up.
   3. `osfmk/vm/vm_shared_region.c`: disable code-signing enforcement for the J3 shared-region map, matching the proven A5 lab workaround.
-- Pre-push validation:
-  - all existing J3 patches were checked for touches to `bsd/kern/ubc_subr.c` and `osfmk/vm/vm_shared_region.c`: **none touch either file**;
-  - A5's earlier 4 KiB patches 0082/0084 also do not touch either target file;
-  - upstream XNU `rel/xnu-8796` contexts match the A5 patch;
-  - all four unified-diff hunk counts were mechanically checked and passed.
+- **CircleCI build #40 failed before producing a usable J3XNU043 artifact. Do not rerun it.**
+- Root cause of that failed attempt was the patch **format**, not a newly observed device/runtime failure:
+  - donor patch 0107 is a zero-context unified diff;
+  - the J3 CircleCI preflight deliberately runs plain `git apply --check` followed by plain `git apply`;
+  - reproducing the committed 0147 locally against the exact XNU 8796 target context fails under plain `git apply --check`, while `--unidiff-zero` accepts it;
+  - weakening CI with `--unidiff-zero` is intentionally rejected because this project requires contextual patch validation.
+- **Correction:** 0147 has now been regenerated from actual XNU 8796 before/after text with normal context around every edit. Semantics are unchanged.
+- Correction preflight completed before the corrective push:
+  - upstream `rel/xnu-8796` context for all three edit sites was fetched and matched;
+  - the previous full-chain audit established no earlier J3 patch modifies `bsd/kern/ubc_subr.c` or `osfmk/vm/vm_shared_region.c`, so their pre-0147 state is upstream XNU 8796;
+  - the contextual diff was generated mechanically from before/after content rather than hand-counting hunk sizes;
+  - plain `git apply --check`: **PASS**;
+  - actual `git apply`: **PASS**;
+  - `git diff --check`: **PASS**;
+  - resulting files exactly match the intended donor-adapted after-state.
+- The contextual 0147 correction and this AGENT.md update are committed atomically so only one new real CircleCI build is triggered.
 - Next packaging boot args must add **`cs_enforcement_disable=1`** to the existing J3XNU042 userspace/read-only args:
   `debug=0xc cpus=1 keepsyms=1 -noprogress -v -enable_kprintf_spam rd=emmcroot0 emmcroot=USERDATA launchdsuffix=release unentitled_ios_sim_launch=1 ignition_level=1 launchd_unsecure_cache=1 wdt_test=no_user_checkin wdt=-1 cs_enforcement_disable=1`
-- Do **not** add `rootrw` or `emmcwrite=1` yet. The expected next milestone is dyld successfully registering/loading the shared cache and launchd reaching its own boot tasks.
+- Do **not** add `rootrw` or `emmcwrite=1` yet. The expected next physical milestone is dyld successfully registering/loading the shared cache and launchd reaching its own boot tasks.
 - A5's next proven blocker after passing this stage was launchd's mount-phase requiring writable root access. That is a likely future J3 issue but is **not yet proven on J3**; do not enable writes pre-emptively.
-
 
 ### CI / patch discipline — CURRENT USER REQUIREMENT
 
