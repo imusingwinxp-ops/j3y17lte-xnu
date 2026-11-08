@@ -1,8 +1,7 @@
 diff --git a/iokit/Kernel/IOService.cpp b/iokit/Kernel/IOService.cpp
 --- a/iokit/Kernel/IOService.cpp
 +++ b/iokit/Kernel/IOService.cpp
-@@ -5126,7 +5126,7 @@ IOService::publishHiddenMedia(IOService * parent)
- 	bool                wasHiding;
+@@ -5128,7 +5128,7 @@ IOService::publishHiddenMedia(IOService * parent)
  
  	iomediaClass = OSMetaClass::getMetaClassWithName(gIOMediaKey);
 -#if !defined(ARM64_BOARD_CONFIG_SWEET)
@@ -10,34 +9,21 @@ diff --git a/iokit/Kernel/IOService.cpp b/iokit/Kernel/IOService.cpp
  	assert(iomediaClass);
  #endif
  
-@@ -5137,8 +5137,8 @@ IOService::publishHiddenMedia(IOService * parent)
+@@ -5139,7 +5139,7 @@ IOService::publishHiddenMedia(IOService * parent)
  	}
  	UNLOCKNOTIFY();
  
 -#if defined(ARM64_BOARD_CONFIG_SWEET)
--	/* SWEET has no IOStorageFamily: without the IOMedia class no media exists to unhide. */
 +#if defined(ARM64_BOARD_CONFIG_SWEET) || defined(ARM64_BOARD_CONFIG_J3Y17LTE)
-+	/* SWEET/J3 may have no IOStorageFamily: without IOMedia there is nothing to unhide. */
+ 	/* SWEET has no IOStorageFamily: without the IOMedia class no media exists to unhide. */
  	if (!iomediaClass) {
  		wasHiding = false;
- 	}
-@@ -5188,7 +5188,19 @@ IOService::setRootMedia(IOService * root)
+@@ -5190,7 +5190,7 @@ IOService::setRootMedia(IOService * root)
  	bool unhide;
  
  	ioblockstoragedriverClass = OSMetaClass::getMetaClassWithName(gIOBlockStorageDriverKey);
-+#if defined(ARM64_BOARD_CONFIG_J3Y17LTE)
-+	/*
-+	 * J3XNU040: emmcroot0 is a direct BSD block device and deliberately has
-+	 * no IOBlockStorageDriver/IOMedia provider chain.  Treat that as the
-+	 * documented non-block-device root case instead of asserting.
-+	 */
-+	if (!ioblockstoragedriverClass) {
-+		IOLog("J3Y17LTE: direct BSD root has no IOBlockStorageDriver; root media parent is NULL\\n");
-+		root = NULL;
-+	}
-+#else
- 	assert(ioblockstoragedriverClass);
-+#endif
- 
- 	while (root) {
- 		if (root->metaCast(ioblockstoragedriverClass)) {
+-#if defined(ARM64_BOARD_CONFIG_SWEET)
++#if defined(ARM64_BOARD_CONFIG_SWEET) || defined(ARM64_BOARD_CONFIG_J3Y17LTE)
+ 	/*
+ 	 * SWEET has no IOStorageFamily, so no service can be a block storage
+ 	 * driver: the root (e.g. a RAM disk) is not block media, as for image boot.
