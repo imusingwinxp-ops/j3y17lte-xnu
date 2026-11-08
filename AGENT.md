@@ -45,7 +45,18 @@
 - **Lexical audit / preflight:** among HFS/VFS-related project patches, only patch0052 touches `bsd/vfs/kpi_vfs.c`; patch0026/0041 do not. Later J3 root/HFS/write/display/crash patches 0143/0144/0145/0148/0149/0150 do not touch this file. Pinned Apple `rel/xnu-8796` `kpi_vfs.c` was reconstructed by applying patch0052; the proposed J3 guard replacement matched exactly once and preserved the existing ENOTSUP/VFS_RENAME_SWAP/VNOP_EXCHANGE safety conditions.
 - **No other behavior changes:** no framebuffer geometry, eMMC bounds, AMFI, dyld, root image, or crash-diagnostic logic changes.
 - **Expected best-case physical result:** first AppleCLCD SwapEnd(s) and a visible white Apple logo. Package the same kernel with `j3fb_noconsole=1` for the physical trial so console muting itself proves the first swap occurred.
-- **Status:** source commit prepared; allow exactly one CircleCI build and do not manually rerun.
+- **Build status:** CircleCI #45 passed for commit `57a664e430bfd78f44f2868a56b9c969d01a5ee8`.
+- **J3XNU047 artifact/package VERIFIED:**
+  - kernel SHA256: **`b7cc84351d8c81d011aef05d638b3c10edffa21183ed0265957e385d51ceb68a`**
+  - payload Mach-O size: **16527408 bytes**, entry `0xfffffff007414488`
+  - recovery size: **16908304 bytes**, Samsung `SEANDROIDENFORCE` trailer preserved
+  - recovery SHA256: **`0ca2bb10e49901c85b9d058397700e80c96bb9f8dac135c3001b8f62e871ed16`**
+  - Odin TAR SHA256: **`bd3ccc22d5e760098b10b1a4e93bcf193299eafecbbf8e08b01d3a7c54ec3b21`**
+  - Windows package: **`C:\\Users\\BalJai\\Downloads\\recovery-j3xnu047-applelogo-odin.tar`**
+  - required features verified: crash diagnostics, short exec logging, AMFI bridge, J3 writable eMMC root string, J3 display match, `j3fb_noconsole`; old LDADD byte-pattern count **0**.
+  - ADT verified at **720x1280**, display-scale **2**.
+  - packaged with **`j3fb_noconsole=1`** so the first real AppleCLCD SwapEnd should mute the console.
+  - Status: **PACKAGED, NOT YET FLASHED** at time of this update.
 
 ## J3XNU046 — bounded userland crash diagnostics
 
