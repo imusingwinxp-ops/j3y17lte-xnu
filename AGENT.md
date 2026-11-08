@@ -43,7 +43,17 @@
 - **Targeted lexical audit:** the inherited diagnostic implementation is introduced/touched by J3 patches 0042, 0043, 0044, 0051, 0053 and 0066. Every patch 0067 through 0149 was inspected for `bsd/kern/kern_exit.c`, `osfmk/kern/exception.c` and `bsd/kern/kern_exec.c`; none touches those files.
 - **Preflight:** pinned Apple `rel/xnu-8796` versions of the three files were reconstructed by applying J3 patches 0042/0043/0044/0051/0053/0066 in order. The functional 0150 hunks then applied exactly to that reconstructed state. A stale cosmetic closing-comment hunk was intentionally removed after preflight rejected its shifted context; no guessed line-count fix was used.
 - **Expected device evidence:** short `exec SpringBoard` / `exec backboardd` records plus, on a real terminating process, `CRASH <name>...`, exit-reason text, register/backtrace data, fault-region data for SIGSEGV/SIGBUS, and bounded heap strings for SIGABRT/SIGTRAP. Do not assume the A5 backboardd container-path crash unless J3 prints its own evidence.
-- **Build status:** source commit prepared; CircleCI is allowed to run once from this real code commit. Do not manually rerun it.
+- **Build status:** CircleCI #44 passed for commit `8082483ace7016cc13259d3d1592ab86e5db30b2`.
+- **J3XNU046 artifact/package VERIFIED:**
+  - kernel SHA256: **`5e891e8dd788e4238e4ff0fa1765ed64f830edda08348e41cc6106f42aac3d5e`**
+  - payload Mach-O size: **16527408 bytes**, entry `0xfffffff007414488`
+  - recovery size: **16908304 bytes**, Samsung `SEANDROIDENFORCE` trailer preserved
+  - recovery SHA256: **`5870ac9511442fd40299f755bbcda2230b5112959ebcca3594911a113cd04ae1`**
+  - Odin TAR SHA256: **`382cd5f0127f2b38ab173fdd1b602d422b000813d664a8849e8ba51977095cc8`**
+  - Windows package: **`C:\\Users\\BalJai\\Downloads\\recovery-j3xnu046-crashdiag-odin.tar`**
+  - embedded diagnostics verified: `CRASH %s[%d] sig`, `CRASH %s reason ns`, `STR scan of %s heap`, `exec %s`.
+  - required prior features verified: AMFI bridge, writable J3 eMMC root string, `samsung,j3y17lte-display`, `j3fb_noconsole`; old LDADD byte-pattern count remains **0**.
+  - Status: **PACKAGED, NOT YET FLASHED** at time of this update.
 
 - **J3XNU045 no-console PHYSICAL RESULT (2026-11-08 ~22:40 UK):** console text continues to scroll after the display bridge and after `MobileGestaltHelper sel 8/28 -> 0x0`. Therefore `j3fb_noconsole=1` did **not** activate and the existing `AppleCLCD::swap()` / SwapEnd path is not device-proven on J3. The submitted frames contain no `SWEET FB: swap ...` line and no iOS-rendered GUI frame.
   - New visible activity includes containermanagerd selectors, mediaserverd selectors, `ansaccountsd`, `remoted`, `cloud`, repeated `xpcproxy`, many HFS hardlink updates, and a network-thread scheduling warning. None of those lines alone proves a fatal blocker.
