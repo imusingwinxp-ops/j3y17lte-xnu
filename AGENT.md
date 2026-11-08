@@ -2,7 +2,103 @@
 
 **Read this entire file before changing anything.** This is a status handoff for the user's active Samsung Galaxy J3 (2017) / Exynos 7570 XNU bring-up. It is not proof that iOS boots. The user calls the phone "J3", refers to the project as "J3XNU", and prefers short, accurate, test-backed steps. The user has repeatedly incurred unnecessary CircleCI credits from failed patch preflights and is particularly concerned about avoiding another failed CI run.
 
-**As of 2026-11-07:** J3XNU025 CircleCI #11 and J3XNU026 CircleCI #12 **compiled, packaged and physically tested**. J3XNU025 passed `_mig_init` and the first 20 Mach IPC callbacks. J3XNU026's 11:50:51 photo suggests callbacks **through zero-based index37 return**, but stage279 (callback index38 returned) is absent; stage281–287 end-of-phase markers are absent, and stage80 panic marker is lit. The user attached the **exact J3XNU026 archive**, verified `SHA256SUMS`, and its Mach-O sorted startup table unambiguously maps callback38 to `ipc_kobject_register_startup(IKOT_IOKIT_CONNECT)` (type29). **J3XNU027 is committed, CircleCI #13 PASSED on its first attempt, and user has successfully verified and packaged its `(4).tgz` artifact for Odin.** It adds targeted diagnostic marks to the dispatcher and registration function, without bypassing checks. **J3XNU027's physical photograph has now been received; see the J3XNU028 active handoff below.** This is not proof of iOS userland.
+**As of 2026-11-08:** the port has advanced far beyond the old MACH_IPC/LSE stage. The physical SM-J330FN now boots XNU, reads the real Exynos7570 eMMC, selects GPT USERDATA as a read-only BSD root, mounts a genuine iOS 16.7.16 HFSX root, bypasses the expected unsealed-root authentication failure for this lab port, and reaches the first real `/sbin/launchd` exec attempt. This is real root-filesystem and process-1 bring-up evidence, but it is **not yet proof that launchd completed startup, SpringBoard ran, or iOS rendered a frame**. J3XNU042 has compiled and been packaged but has **not yet been physically flashed/tested**. The user explicitly wants CI credits conserved: do not create another code build until J3XNU042 physical evidence gives a decision point.
+
+## J3XNU042 active handoff — 2026-11-08 (supersedes all earlier active handoffs)
+
+### Physical storage / iOS root state — VERIFIED
+
+- Device: Samsung Galaxy J3 (2017) SM-J330FN / `j3y17lte`, Exynos7570, Cortex-A53.
+- TWRP positively identified `USERDATA -> /dev/block/mmcblk0p25`.
+- USERDATA geometry is independently identical in TWRP and XNU:
+  - start LBA: **6713344**
+  - sectors: **24051712**
+  - bytes: **12314476544**
+- J3 XNU eMMC host base is `0x13540000`; J3XNU038 proved real CMD17 reads and GPT parsing on hardware.
+- Installed root is a reduced **genuine iPhone X iOS 16.7.16 (20H392)** HFSX image built from `iPhone10,3,iPhone10,6_16.7.16_20H392_Restore.ipsw`.
+- Final root image:
+  - path on user's WSL: `~/ios-j330fn/rootbuild/20H392/ios16-j3-reduced-20H392.img`
+  - bytes: **11811160064** (11 GiB)
+  - SHA256: **6e462e69ae145358d72cb19aa9f03346ad23c35c282d8c72dda3cfc2b4243e0c**
+  - leaves **480 MiB** unused at the end of USERDATA.
+- The image was written from TWRP with root ADB and then the **entire 11 GiB region was read back and SHA256-hashed on-device**. Device hash exactly matched the host hash above. Treat the installed USERDATA root as byte-for-byte verified.
+- Critical files were verified before install: `/sbin/launchd`, SpringBoard, dyld shared cache, SystemOS cryptex cache and AppOS cryptex.
+- The root was fsck-repaired/verified clean before install. Donor first-boot tweaks were applied. No mobileactivationd data ark existed in this reduced image; this may matter later, but is not the current blocker.
+- **Do not boot Android.** Android/TWRP may regard the HFSX USERDATA as foreign. TWRP may be flashed to the separate RECOVERY partition, but do not mount/format/repair/resize `/data`/USERDATA.
+
+### J3XNU038 → J3XNU041 physical progression
+
+- **J3XNU038** (`0142-j3y17lte-readonly-emmc-root.patch`) added a deliberately read-only direct BSD eMMC root device. Hardware printed:
+  - `J3Y17LTE eMMC: GPT USERDATA first=6713344 sectors=24051712 read-only`
+  - then the old Apple_HFS wait remained because no `rd=emmcroot0` was yet used.
+  - kernel SHA256: `33aeb440379f222dcef9a4489c717f34781e16e67ccd79f5705e5e2f67cdec76`.
+- **J3XNU039** added `0143-j3y17lte-unsealed-hfs-root.patch` (commit `e7d861fb500aead5b2dbc8758929dceb66ac2311`). First real `rd=emmcroot0 emmcroot=USERDATA` boot selected USERDATA, then panicked in `IOService::setRootMedia()` because J3's direct BSD device has no `IOBlockStorageDriver` / `IOMedia` provider chain.
+  - J3XNU039 kernel SHA256: `459997e6a4800e537f6c6bd35eeb206765bb74095700d6d8f51fe1e3a4442d62`.
+- **J3XNU040** added `0144-j3y17lte-direct-bsd-root-media.patch`, reusing the donor's existing direct-root handling for J3. Physical result: the IOService assertion was passed. HFS then repeatedly failed during late journal init because the journal code tried to write its header and the intentionally read-only eMMC strategy returned `EROFS` (`0x1e`).
+- **J3XNU041** added `0145-j3y17lte-readonly-hfs-journal.patch`, skipping write-requiring late journal initialization only for a J3 read-only root, allowing Apple's existing read-only journaled-volume path to run.
+- **J3XNU041 physical proof:** the phone displayed:
+  - `J3Y17LTE eMMC: GPT USERDATA first=6713344 sectors=24051712 read-only`
+  - `J3Y17LTE eMMC: /dev/emmcroot0 ready, GPT USERDATA read-only`
+  - `BSD root: emmcroot0, major 1, minor 0`
+  - **`hfs: mounted iosRoot on device b(1, 0)`**
+  - `SWEET: root volume is not authenticated (error 25); continuing unsealed`
+  - `load_init_program: attempting to load /sbin/launchd`
+- This is the current strongest milestone: **the physical J3 mounts the installed genuine iOS HFSX root and reaches process-1 exec.**
+
+### J3XNU041 userspace-args trial and new panic
+
+- J3XNU041 was repackaged without a kernel rebuild using:
+  `debug=0xc cpus=1 keepsyms=1 -noprogress -v -enable_kprintf_spam rd=emmcroot0 emmcroot=USERDATA launchdsuffix=release unentitled_ios_sim_launch=1 ignition_level=1 launchd_unsecure_cache=1 wdt_test=no_user_checkin wdt=-1`
+- Still **no `rootrw`**, no `emmcwrite=1`, and no eMMC write implementation. Keep root read-only until a specific later milestone requires writes.
+- Physical boot still mounted `iosRoot` and went directly to `/sbin/launchd`; about 30 seconds later a new panic appeared.
+- The framebuffer panic-format barcode decodes to the prefix **`%s at pc 0x%016l`**, matching XNU's generic ARM64 saved-state panic path in `sleh.c`. The photo did not expose a readable PC/LR/ESR/FAR.
+- Comparison with the device-proven A5XELTE port found an extremely close precedent: its first populated iOS USERDATA boot reached launchd and then took a kernel data abort in `accelerate_entitlement_queries` because the donor AMFI interface registration was guarded for SWEET only.
+
+### J3XNU042 — current build/package, NOT YET PHYSICALLY TESTED
+
+- J3XNU042 is **patch `0146-j3y17lte-amfi-bridge.patch`**.
+- After two rejected broad/stale donor attempts, the final patch was deliberately reduced to only the two functional board-guard changes actually needed by this tree:
+  1. build/register `bsd/kern/sweet_amfi.c` for `ARM64_BOARD_CONFIG_J3Y17LTE` as well as SWEET;
+  2. call `sweet_amfi_policy_register()` for J3 in `bsd_init.c`.
+- `SweetEntitlements.cpp` needs no J3-specific hunk because `J3Y17LTE.h` already defines `SWEET 1`, so its existing `#if defined(SWEET)` path is compiled.
+- Final J3XNU042 code commit: **`4b5efee714772b0d640bc98331dbf593570b0d1b`**.
+- User downloaded the successful artifact as **`j3y17lte-xnu-kernel (19).tgz`**.
+- Artifact validation:
+  - `SHA256SUMS`: OK
+  - Mach-O 64-bit arm64
+  - kernel SHA256: **`dd6e4ae55531adac34472a730151a6ac85cacf48683e1f05cc83feb42f7633d9`**
+  - embedded strings present:
+    - `SWEET AMFI: built-in interface registered (XML entitlements)`
+    - `SWEET AMFI: platform binary policy %s (%d)`
+    - `SWEET Sandbox: permissive policy %s (%d)`
+    - `J3Y17LTE eMMC: /dev/emmcroot0 ready, GPT %s read-only`
+  - old LSE `LDADD` byte pattern `28 01 28 f8`: **0 occurrences**.
+- J3XNU042 was packaged with the same userland/read-only boot args above:
+  - recovery image SHA256: **`2578482adb43d188ae8f12efce988ed1307c1746d02a81f31d96e0152f7e3d81`**
+  - Odin tar SHA256: **`3f1864d6149f1287fce5faab7d32fc2d2aecd0076f3f29b1ca5cef90ec1d44de`**
+  - Windows path: **`C:\Users\BalJai\Downloads\recovery-j3xnu042-userland-ro-odin.tar`**
+  - package status at this handoff: **NOT FLASHED**.
+- **Next action:** physically test J3XNU042 through the established RECOVERY-only Odin AP workflow. Do not rebuild. On boot, first look for the AMFI registration line before `/sbin/launchd`, then photograph any later console/panic.
+- If AMFI registration appears and the previous ~30-second generic ARM64 panic disappears, the next likely blocker is the **known A5XELTE 4 KiB kernel vs iOS 16 KiB CodeDirectory/shared-cache registration issue**. Do not patch it pre-emptively: verify J3's runtime first.
+- The A5 precedent after AMFI was: dyld starts inside PID1, shared-cache code signature registration fails because the CodeDirectory page shift is 14 (16 KiB) while the non-Apple kernel uses 4 KiB VM pages. A5 fixed that in its patch0107 and added `cs_enforcement_disable=1`. This is a useful map, **not yet proven to be J3's next failure**.
+
+### CI / patch discipline — CURRENT USER REQUIREMENT
+
+- The user reports CircleCI budget is tight and explicitly said **stop burning credits/tokens**.
+- **Do not push speculative code to main.**
+- **Do not invoke/re-run CircleCI for documentation.**
+- This AGENT.md update itself must be docs-only with **`[ci skip]`**.
+- New kernel patches must be validated against the **full cumulative lexical patch chain**, not upstream source alone. The recent failures were:
+  - malformed hunk count in 0138/0144-style manual diffs;
+  - stale context copied from donor A5 patches;
+  - assuming a donor patch's line numbers/guards still matched J3's cumulative tree.
+- For any next patch: inspect all earlier patches touching the same target file; reconstruct the post-chain text; generate the diff rather than hand-counting hunk sizes; run `git apply --check`, apply it, and run `git diff --check` before a code push.
+- Do **not** rewrite USERDATA or rebuild the iOS root for the current AMFI/dyld issues. The installed root is already full-readback verified.
+- Do **not** enable eMMC writes/rootrw merely to get farther unless a concrete userspace failure proves write access is required and the change is separately bounded/tested.
+- TWRP can be restored to RECOVERY without touching the iOS root, but never format/mount/repair Android `/data`.
+- Never flash BL/CP/CSC/PIT or repartition. The established experiment is RECOVERY-only plus the already-completed USERDATA root install.
+
+
 
 ## J3XNU032 active handoff — 2026-11-07 (supersedes earlier handoffs)
 
