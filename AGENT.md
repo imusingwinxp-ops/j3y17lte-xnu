@@ -87,7 +87,15 @@
   - recovery SHA256: `37108c5ad05f188314f9b26152a8023f0d0276dc86e8321e29de5a270e13edcd`
   - Odin TAR SHA256: `e749e77c349371432651cf5f438654f58ce0f42144ec8c80a9263561e74d79d6`
   - Windows: `C:\\Users\\BalJai\\Downloads\\recovery-j3xnu049-smp4-statefix-odin.tar`
-- **Status:** repaired ADT and both zero-CI packages verified. Next physical test is **2 cores first at 10 Hz**. Do not spend the final CircleCI build yet.
+- **2-core state-fixed physical test:** XNU reached a multicore panic path. User observed:
+  - `Attempting to forcibly halt cpu0`
+  - `failed to halt`
+  - kernel panic.
+- **Critical interpretation:** these halt messages are panic-debugger aftermath, not the root panic. In XNU `DebuggerXCallEnter()`, the force-halt loop explicitly skips `target_cpu_datap == cpu_data_ptr` (the CPU currently handling the panic). Therefore, if the panic logger attempted to halt **CPU0**, the panic was executing on another online CPU — most plausibly **CPU1** in this 2-core test. This is strong evidence that the repaired ADT got past topology parsing and that CPU1 reached an online/executing state.
+- The `failed to halt cpu0` message is expected to be non-diagnostic on J3 because Apple debug-wrapper CPU halt support is not implemented for Exynos7570; it does not identify the original fault.
+- **Next evidence needed before using final CI build:** capture/read the panic text immediately *before* the forced-halt lines (or decode the framebuffer panic barcode if present). That original panic determines whether the final fix belongs in secondary reset/MMU, GIC/timer/IPI, scheduler/per-CPU init, or another SMP assumption.
+- **Status:** SMP made materially more progress; CPU1 likely came online. Final CircleCI build remains unused.
+
 
 
 
