@@ -48,6 +48,12 @@
 - **Expected physical test:** package with the proven J3XNU047 boot args including `j3fb_noconsole=1`. Home/volume should emit native consumer-control HID events; TD4100 tap/swipe should emit digitizer events and make the lock screen interactive.
 - **CI correction:** the first J3XNU048 attempt failed before compilation because the SweetHID hunk at patch line 70 declared +24 lines but contained +27. Header-only repair: +24→+27; downstream new-start coordinates 474→477 and 488→491. All patch hunk counts validate after repair; SweetHID strict-apply passes.
 - **Build status:** corrected J3XNU048 commit `51f24e0c5404e9900d0cd307094d7c74a2a52569` passed CircleCI #47.
+- **J3XNU048 PHYSICAL RESULT — TOUCH WORKS, PERFORMANCE UNUSABLE, 2026-11-09 ~00:02 UK:** user-supplied video proves real TD4100 touch input is reaching iOS and causing correct UI transitions. The lock screen responds to gestures and transitions into other SpringBoard UI, so coordinate mapping/HID delivery are functionally working. However, response is multi-second/slideshow-like and practically unusable.
+  - This is not primarily a touch-coordinate failure: gestures eventually produce the intended UI changes.
+  - Current J3 topology remains intentionally single-core: patch0101 hard-requires `topology->num_cpus == 1` and disables donor secondary-CPU support on J3. Merely changing the `cpus=` boot arg cannot expose more cores in the current build.
+  - J3XNU048 touch also polls the TD4100 at ~50 Hz using GPIO bit-banged I2C on that same single Cortex-A53, which adds measurable CPU overhead on top of iOS 16 userspace.
+  - No further CI build budget remains in this session. Future performance work should prioritize real Exynos7570 SMP bring-up and/or hardware-I2C/IRQ-driven touch instead of framebuffer/UI work.
+  - Hardware button functionality was not conclusively established by the supplied video; touch functionality was.
 - **J3XNU048 artifact/package VERIFIED:**
   - kernel SHA256: **`1c920a362a49557177090dd6b54a1d5d39dbe84cd476129a6da6e23d0fe27065`**
   - payload Mach-O size: **16528320 bytes**, entry `0xfffffff007414488`
