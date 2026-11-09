@@ -48,7 +48,11 @@
 - **Expected physical test:** package with the proven J3XNU047 boot args including `j3fb_noconsole=1`. Home/volume should emit native consumer-control HID events; TD4100 tap/swipe should emit digitizer events and make the lock screen interactive.
 - **CI correction:** the first J3XNU048 attempt failed before compilation because the SweetHID hunk at patch line 70 declared +24 lines but contained +27. Header-only repair: +24→+27; downstream new-start coordinates 474→477 and 488→491. All patch hunk counts validate after repair; SweetHID strict-apply passes.
 - **Build status:** corrected J3XNU048 commit `51f24e0c5404e9900d0cd307094d7c74a2a52569` passed CircleCI #47.
-- **J3XNU048 quiet-performance physical result:** Apple logo appeared substantially sooner than the normal J3XNU048 package and, for the first time, visibly faded out (still laggy). A loading spinner then appeared, followed by a powered black screen; the lock screen did not reappear during the observed run.
+- **J3XNU048 quiet-performance physical result:** Apple logo appeared substantially sooner than the normal J3XNU048 package and, for the first time, visibly faded out (still laggy). A loading spinner then appeared, followed by a long powered-black interval; **the lock screen eventually did appear** without any further repack or reboot.
+  - Therefore the post-spinner black interval was not a terminal stall. The quiet package reaches SpringBoard/lock screen successfully.
+  - Removing `debug=0xc`, `keepsyms=1`, `-v`, and `-enable_kprintf_spam` materially improves boot/render timing on the single Cortex-A53.
+  - Touch remains functional, but gestures are still extremely slow/unusable. The remaining dominant bottleneck is the single-core J3 topology plus the ~50 Hz GPIO bit-banged TD4100 polling path, not a boot failure.
+  - Do **not** replace this package with the proposed `fastv` diagnostic unless new evidence requires it; the quiet package already proved stable to lock screen.
   - This proves removing `debug=0xc`, `keepsyms=1`, `-v`, and `-enable_kprintf_spam` materially improves boot/render timing on the single Cortex-A53.
   - The post-spinner black screen is not yet classified: it may be the known display-off path or a later userspace stall. Use a zero-CI diagnostic repack of the same J3XNU048 kernel with lightweight console visibility to distinguish them before spending any remaining build budget.
 - **J3XNU048 quiet-performance repack (same kernel, no CI):**
