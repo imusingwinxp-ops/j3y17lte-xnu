@@ -48,7 +48,25 @@
 - **Display/GPU:** no Mali driver is attempted in this build. Current AppleCLCD presentation remains CPU-copy based and defaults to `sweetfb_hz=10`; after SMP proof, test `sweetfb_hz=20` then 30 via boot args with no additional kernel build.
 - **ADT requirement:** current J3 payload ADT is local-only and presently describes CPU0. After a successful kernel artifact, add CPU1-3 locally with logical IDs/regs 1,2,3 and package with `cpus=4`; this costs no CircleCI build.
 - **Preflight:** all 9 patch hunks have validated old/new line counts. Reconstructed SweetCPU/header/topology contexts were checked while preparing the patch; no branch update occurred until the final diff metadata passed.
-- **Status:** source committed for exactly one automatic CircleCI performance build. Do not manually rerun.
+- **CircleCI #48:** SUCCESS.
+- **Verified J3XNU049 artifact:**
+  - kernel SHA256: `4ed5a52709bdd375dd2479cf69ba70b0e1a8b6ffc7234ca30c46c233bb183881`
+  - kernel size: 16547136
+  - entry: `0xfffffff007414488`
+  - old Cortex-A53-incompatible LDADD byte-pattern count: 0
+  - SMP strings present for requested/selected CPUs, PSCI CPU_ON, per-CPU alive+SGI, and all-CPU initialized.
+- **Local SMP4 ADT:** CPU0 cloned to CPU1-3 with regs/MPIDRs 0,1,2,3.
+  - original ADT bytes: 3740
+  - SMP4 ADT bytes: 6128
+  - SMP4 ADT SHA256: `3b83ba35b939368c73604de1dcd762048ce423ab861e6f7053e3e5efb1eeb7be`
+- **SMP4 + 20Hz quiet package:**
+  - boot args include `cpus=4 sweetfb_hz=20` plus the proven quiet J3 args.
+  - recovery SHA256: `976f7a44e863ef34c5f63923203f07469ec03b64d889f835b742e5c2f0078f68`
+  - Odin TAR SHA256: `3286fc76fb5c55599315615da26dce82c5b52ffb5209b01139b96097ce32b22c`
+  - Windows package: `C:\\Users\\BalJai\\Downloads\\recovery-j3xnu049-smp4-fast-odin.tar`
+  - Samsung `SEANDROIDENFORCE` trailer preserved.
+- **Status:** VERIFIED AND PACKAGED, NOT YET FLASHED.
+
 
 ## J3XNU048 — physical touch + GPIO keys
 
