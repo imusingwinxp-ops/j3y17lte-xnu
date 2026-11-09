@@ -48,6 +48,13 @@
 - **Expected physical test:** package with the proven J3XNU047 boot args including `j3fb_noconsole=1`. Home/volume should emit native consumer-control HID events; TD4100 tap/swipe should emit digitizer events and make the lock screen interactive.
 - **CI correction:** the first J3XNU048 attempt failed before compilation because the SweetHID hunk at patch line 70 declared +24 lines but contained +27. Header-only repair: +24→+27; downstream new-start coordinates 474→477 and 488→491. All patch hunk counts validate after repair; SweetHID strict-apply passes.
 - **Build status:** corrected J3XNU048 commit `51f24e0c5404e9900d0cd307094d7c74a2a52569` passed CircleCI #47.
+- **J3XNU048 quiet-performance repack (same kernel, no CI):**
+  - removed boot args: `debug=0xc`, `keepsyms=1`, `-v`, `-enable_kprintf_spam`
+  - retained: `cpus=1 -noprogress rd=emmcroot0 emmcroot=USERDATA launchdsuffix=release unentitled_ios_sim_launch=1 ignition_level=1 launchd_unsecure_cache=1 wdt_test=no_user_checkin wdt=-1 cs_enforcement_disable=1 emmcwrite=1 j3fb_noconsole=1`
+  - recovery SHA256: **`133adbdc14a15cd60adf5d62917d7b9bf9244809d45d4b0f57dfc2d3a18a5f2e`**
+  - Odin TAR SHA256: **`645779313d5ea4a694f294c09e5a194e58f21beb4414dd88a735074f0c1e4cea`**
+  - Windows package: **`C:\\Users\\BalJai\\Downloads\\recovery-j3xnu048-fast-odin.tar`**
+  - Status: **PACKAGED, NOT YET FLASHED** at time of this update.
 - **J3XNU048 PHYSICAL RESULT — TOUCH WORKS, PERFORMANCE UNUSABLE, 2026-11-09 ~00:02 UK:** user-supplied video proves real TD4100 touch input is reaching iOS and causing correct UI transitions. The lock screen responds to gestures and transitions into other SpringBoard UI, so coordinate mapping/HID delivery are functionally working. However, response is multi-second/slideshow-like and practically unusable.
   - This is not primarily a touch-coordinate failure: gestures eventually produce the intended UI changes.
   - Current J3 topology remains intentionally single-core: patch0101 hard-requires `topology->num_cpus == 1` and disables donor secondary-CPU support on J3. Merely changing the `cpus=` boot arg cannot expose more cores in the current build.
