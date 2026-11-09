@@ -74,7 +74,21 @@
   - Failure occurs in CPU topology parsing, before useful evidence of PSCI secondary CPU_ON/GIC bring-up.
   - Strong root-cause candidate: the local SMP4 ADT was produced by deep-cloning CPU0. XNU's `ml_is_boot_cpu()` treats a CPU node as the boot CPU iff its `state` property equals `running`. If CPU0's proven node has `state=running`, CPU1-3 inherited that state, causing multiple CPUs to be identified as boot CPUs and an assertion on `topology_info.boot_cpu == NULL`.
   - **Do not spend the final CircleCI build yet.** First make a zero-CI ADT-only repair: preserve CPU0 `state=running`, set CPU1-3 to a non-running state, reuse the verified J3XNU049 kernel, and test at the default 10 Hz display rate to isolate SMP.
-- **Status:** J3XNU049 kernel verified; first SMP4 ADT test failed in topology parsing; zero-CI ADT repair is next.
+- **Zero-CI ADT repair CONFIRMED the root cause:**
+  - Before repair: CPU0/1/2/3 all had `state='running'`.
+  - After repair: CPU0=`running`; CPU1/2/3=`halted`.
+  - This confirms the original SMP4 ADT incorrectly marked every cloned CPU as the boot CPU, matching the topology assertion seen physically.
+  - repaired SMP4 ADT SHA256: `cb751629f74719e825da8e4e3d39578e68137ca61db96f6ebbf9417393ba252b`
+- **J3XNU049 2-core state-fixed control package:**
+  - recovery SHA256: `7942fe0e5dec52b2e006d8ac3e490ac1b04b065a19fe4155e4ee10b42defcc2a`
+  - Odin TAR SHA256: `99e94b82743f5e0d43faf5b408007bcd31b8b24de787052c1a5bda1f92ebb5ee`
+  - Windows: `C:\\Users\\BalJai\\Downloads\\recovery-j3xnu049-smp2-statefix-odin.tar`
+- **J3XNU049 4-core state-fixed package (hold until 2-core result):**
+  - recovery SHA256: `37108c5ad05f188314f9b26152a8023f0d0276dc86e8321e29de5a270e13edcd`
+  - Odin TAR SHA256: `e749e77c349371432651cf5f438654f58ce0f42144ec8c80a9263561e74d79d6`
+  - Windows: `C:\\Users\\BalJai\\Downloads\\recovery-j3xnu049-smp4-statefix-odin.tar`
+- **Status:** repaired ADT and both zero-CI packages verified. Next physical test is **2 cores first at 10 Hz**. Do not spend the final CircleCI build yet.
+
 
 
 
