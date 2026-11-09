@@ -1,0 +1,1 @@
+This file was made shortly after first boot on 09/11/2026 at 00:51:22 as proof that I, Ba##ir-Jai D##ia ('imusingwindowsxp' - baljai##a@yahoo.com) am the first person globally to boot iOS iOS 16.7.16 (unmodified, native) for the iPhone X (Genuine IPSW) on the Samsung Galaxy J3 (J330FN - 16GB model).
