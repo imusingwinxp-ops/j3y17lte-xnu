@@ -65,7 +65,17 @@
   - Odin TAR SHA256: `3286fc76fb5c55599315615da26dce82c5b52ffb5209b01139b96097ce32b22c`
   - Windows package: `C:\\Users\\BalJai\\Downloads\\recovery-j3xnu049-smp4-fast-odin.tar`
   - Samsung `SEANDROIDENFORCE` trailer preserved.
-- **Status:** VERIFIED AND PACKAGED, NOT YET FLASHED.
+- **First physical SMP4 test FAILED before GUI/console.**
+  - Photo shows the early panic/assertion barcode over the stale Samsung splash; this is not iOS rendering.
+  - Assertion barcode decoded from the supplied photo:
+    - source prefix: `machine_routines`
+    - source line barcode: `0x0000045e` = **1118**
+    - expression prefix: `topology_info.bo`
+  - Failure occurs in CPU topology parsing, before useful evidence of PSCI secondary CPU_ON/GIC bring-up.
+  - Strong root-cause candidate: the local SMP4 ADT was produced by deep-cloning CPU0. XNU's `ml_is_boot_cpu()` treats a CPU node as the boot CPU iff its `state` property equals `running`. If CPU0's proven node has `state=running`, CPU1-3 inherited that state, causing multiple CPUs to be identified as boot CPUs and an assertion on `topology_info.boot_cpu == NULL`.
+  - **Do not spend the final CircleCI build yet.** First make a zero-CI ADT-only repair: preserve CPU0 `state=running`, set CPU1-3 to a non-running state, reuse the verified J3XNU049 kernel, and test at the default 10 Hz display rate to isolate SMP.
+- **Status:** J3XNU049 kernel verified; first SMP4 ADT test failed in topology parsing; zero-CI ADT repair is next.
+
 
 
 ## J3XNU048 — physical touch + GPIO keys
