@@ -48,6 +48,9 @@
 - **Expected physical test:** package with the proven J3XNU047 boot args including `j3fb_noconsole=1`. Home/volume should emit native consumer-control HID events; TD4100 tap/swipe should emit digitizer events and make the lock screen interactive.
 - **CI correction:** the first J3XNU048 attempt failed before compilation because the SweetHID hunk at patch line 70 declared +24 lines but contained +27. Header-only repair: +24→+27; downstream new-start coordinates 474→477 and 488→491. All patch hunk counts validate after repair; SweetHID strict-apply passes.
 - **Build status:** corrected J3XNU048 commit `51f24e0c5404e9900d0cd307094d7c74a2a52569` passed CircleCI #47.
+- **J3XNU048 quiet-performance physical result:** Apple logo appeared substantially sooner than the normal J3XNU048 package and, for the first time, visibly faded out (still laggy). A loading spinner then appeared, followed by a powered black screen; the lock screen did not reappear during the observed run.
+  - This proves removing `debug=0xc`, `keepsyms=1`, `-v`, and `-enable_kprintf_spam` materially improves boot/render timing on the single Cortex-A53.
+  - The post-spinner black screen is not yet classified: it may be the known display-off path or a later userspace stall. Use a zero-CI diagnostic repack of the same J3XNU048 kernel with lightweight console visibility to distinguish them before spending any remaining build budget.
 - **J3XNU048 quiet-performance repack (same kernel, no CI):**
   - removed boot args: `debug=0xc`, `keepsyms=1`, `-v`, `-enable_kprintf_spam`
   - retained: `cpus=1 -noprogress rd=emmcroot0 emmcroot=USERDATA launchdsuffix=release unentitled_ios_sim_launch=1 ignition_level=1 launchd_unsecure_cache=1 wdt_test=no_user_checkin wdt=-1 cs_enforcement_disable=1 emmcwrite=1 j3fb_noconsole=1`
