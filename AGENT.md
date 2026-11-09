@@ -35,6 +35,21 @@
 - **Current J3XNU045 status:** kernel, ADT and package are verified; physical display-service registration, system-boot completion and SpringBoard spawn authorization are verified. Actual SpringBoard/backboardd survival and a GUI swap remain unproven.
 - **Best zero-CI next diagnostic:** repackage the same J3XNU045 kernel with only `j3fb_noconsole=1`. The console-mute flag is checked on the first actual framebuffer SwapEnd path, so if the console never mutes then no swap reached AppleCLCD; if it mutes, the swap path ran and the resulting visible frame/black/garbled output becomes the next evidence. Panics retain the existing J3 diagnostics. Do not build J3XNU046 merely for this test.
 - **J3XNU045 no-console repack VERIFIED:** same kernel and ADT, boot args additionally include only `j3fb_noconsole=1`.
+## J3XNU049 — Exynos7570 4-core SMP performance bring-up
+
+- **Goal:** remove the dominant J3XNU048 performance wall by bringing all four Cortex-A53 cores online while preserving the proven iOS GUI/touch path.
+- **Patch:** `0153-j3y17lte-smp4.patch`.
+- **Samsung hardware source confirms:** Exynos7570 exposes four Cortex-A53 CPUs with MPIDRs 0,1,2,3 and `enable-method = "psci"`; PSCI uses SMC and CPU_ON function ID `0xC4000003`. This matches the donor XNU PSCI secondary-entry mechanism already compiled into the J3 kernel.
+- **Board limit:** `SWEET_SMP_MAX_CPUS` raised from 1 to 4; existing board `MAX_CPUS` was already 4.
+- **Topology:** J3 uses MPIDR Aff0 for core IDs, unlike SWEET's Aff1 layout. J3 now derives `cluster_core_id` from `phys_id & 0xff`.
+- **GICv2 SMP:** replaces self-only SGI with targetable GICD_SGIR delivery for CPU0-3 and adds per-CPU initialization of banked SGI/PPI group/priority/enable registers plus GICC PMR/BPR/CTLR before each core's self-IPI validation.
+- **Secondary entry:** J3 skips donor `ICC_SRE_EL2` accesses in the EL2 fallback because Exynos7570 is GICv2; the rest of the PSCI secondary reset path is retained.
+- **SweetCPU:** J3 topology now accepts coherent CPU0-3, calls per-CPU GIC init from `initCPU`, and routes scheduler IPIs to arbitrary selected J3 CPUs.
+- **Display/GPU:** no Mali driver is attempted in this build. Current AppleCLCD presentation remains CPU-copy based and defaults to `sweetfb_hz=10`; after SMP proof, test `sweetfb_hz=20` then 30 via boot args with no additional kernel build.
+- **ADT requirement:** current J3 payload ADT is local-only and presently describes CPU0. After a successful kernel artifact, add CPU1-3 locally with logical IDs/regs 1,2,3 and package with `cpus=4`; this costs no CircleCI build.
+- **Preflight:** all 9 patch hunks have validated old/new line counts. Reconstructed SweetCPU/header/topology contexts were checked while preparing the patch; no branch update occurred until the final diff metadata passed.
+- **Status:** source committed for exactly one automatic CircleCI performance build. Do not manually rerun.
+
 ## J3XNU048 — physical touch + GPIO keys
 
 - **Goal:** make the proven J3XNU047 iOS lock screen physically usable in one build: real Synaptics touch plus direct J3 hardware keys.

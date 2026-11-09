@@ -1,0 +1,152 @@
+--- a/pexpert/pexpert/arm64/J3Y17LTE.h
++++ b/pexpert/pexpert/arm64/J3Y17LTE.h
+@@ -8,7 +8,7 @@
+ #define J3Y17LTE                       1
+ /* Reuse donor's SoC-neutral early services until their guards are renamed. */
+ #define SWEET                         1
+-#define SWEET_SMP_MAX_CPUS            1
++#define SWEET_SMP_MAX_CPUS            4
+ 
+ #define ARM_ARCH_TIMER
+ #define __ARM_ARCH__                  8
+--- a/pexpert/arm/pe_fiq.c
++++ b/pexpert/arm/pe_fiq.c
+@@ -249,10 +249,36 @@
+ }
+ 
+ void
+-j3y17lte_send_self_ipi(void)
++j3y17lte_send_ipi(unsigned int cpu)
+ {
++	if (cpu >= 4) {
++		panic("j3y17lte: invalid GICv2 SGI target %u", cpu);
++	}
+ 	__builtin_arm_dsb(DSB_ISHST);
+-	j3_gic_write32(j3_gicd_base, 0xf00, (2U << 24) | 1U);
++	/* GICD_SGIR: target-list filter 0, CPU target bit, SGI 1. */
++	j3_gic_write32(j3_gicd_base, 0xf00, (1U << (16 + cpu)) | 1U);
++	__builtin_arm_isb(ISB_SY);
++}
++
++void
++j3y17lte_gic_init_cpu(void)
++{
++	if (!j3_gicd_base || !j3_gicc_base) {
++		panic("j3y17lte: GICv2 per-CPU init before global mapping");
++	}
++	/* SGI/PPI distributor registers and the CPU interface are banked per core. */
++	j3_gic_write32(j3_gicd_base, 0x080,
++	    j3_gic_read32(j3_gicd_base, 0x080) | (1U << 27) | (1U << 1));
++	for (unsigned int i = 0; i < 32; i += 4) {
++		j3_gic_write32(j3_gicd_base, 0x400 + i, 0xa0a0a0a0U);
++	}
++	j3_gic_write32(j3_gicd_base, 0x100, (1U << 27) | (1U << 1));
++	j3_gic_write32(j3_gicc_base, 0x004, 0xff);
++	j3_gic_write32(j3_gicc_base, 0x008, 0);
++	j3_gic_write32(j3_gicc_base, 0x000,
++	    j3_gic_read32(j3_gicc_base, 0x000) | 1U);
++	__builtin_arm_dsb(DSB_SY);
++	__builtin_arm_isb(ISB_SY);
+ }
+ 
+ void
+@@ -275,17 +301,7 @@
+ 	if (!j3_gicd_base || !j3_gicc_base) {
+ 		panic("j3y17lte: cannot map GICv2");
+ 	}
+-	/* INTID 27 is the virtual timer PPI; SGI 1 is the local self signal. */
+-	j3_gic_write32(j3_gicd_base, 0x080,
+-	    j3_gic_read32(j3_gicd_base, 0x080) | (1U << 27) | (1U << 1));
+-	for (unsigned int i = 0; i < 32; i += 4) {
+-		j3_gic_write32(j3_gicd_base, 0x400 + i, 0xa0a0a0a0U);
+-	}
+-	j3_gic_write32(j3_gicd_base, 0x100, (1U << 27) | (1U << 1));
+-	j3_gic_write32(j3_gicc_base, 0x004, 0xff); /* GICC_PMR */
+-	j3_gic_write32(j3_gicc_base, 0x008, 0);    /* GICC_BPR */
+-	j3_gic_write32(j3_gicc_base, 0x000,
+-	    j3_gic_read32(j3_gicc_base, 0x000) | 1U);
++	j3y17lte_gic_init_cpu();
+ 	j3_gic_write32(j3_gicd_base, 0x000,
+ 	    j3_gic_read32(j3_gicd_base, 0x000) | 1U);
+ 	__builtin_arm_dsb(DSB_SY);
+--- a/iokit/Kernel/arm/SweetCPU.cpp
++++ b/iokit/Kernel/arm/SweetCPU.cpp
+@@ -21,7 +21,8 @@
+ extern "C" void sweet_secondary_entry(void);
+ extern "C" boolean_t sweet_cpu_signal_is_enabled(unsigned int cpu);
+ #if defined(J3Y17LTE)
+-extern "C" void j3y17lte_send_self_ipi(void);
++extern "C" void j3y17lte_send_ipi(unsigned int cpu);
++extern "C" void j3y17lte_gic_init_cpu(void);
+ #define CPU_PORT_NAME "J3Y17LTE"
+ #else
+ #define CPU_PORT_NAME "SWEET"
+@@ -80,9 +81,10 @@
+ 		return false;
+ 	}
+ #if defined(J3Y17LTE)
+-	/* Only CPU0 is described and tested for the Exynos7570 port. */
+-	if (cpu->phys_id != 0 || topology->num_cpus != 1) {
+-		panic(CPU_PORT_NAME " CPU: unsupported topology cpu=%u mpidr=0x%x count=%u",
++	/* Exynos7570 is one coherent Cortex-A53 cluster: MPIDR Aff0 = 0..3. */
++	if (cpu->phys_id > 3 || cpu->cpu_id != cpu->phys_id ||
++	    topology->num_cpus > SWEET_SMP_MAX_CPUS) {
++		panic(CPU_PORT_NAME " CPU: invalid topology cpu=%u mpidr=0x%x count=%u",
+ 		    cpu->cpu_id, cpu->phys_id, topology->num_cpus);
+ 	}
+ #else
+@@ -211,6 +213,9 @@
+ 	}
+ 	assert(cpu_number() == (int)getCPUNumber());
+ 
++#if defined(J3Y17LTE)
++	j3y17lte_gic_init_cpu();
++#endif
+ 	ml_broadcast_cpu_event(CPU_BOOTED, getCPUNumber());
+ 
+ 	/* Secondary startup runs at splsched: queue the self-IPI and return.
+@@ -228,10 +233,12 @@
+ SweetCPU::signalCPU(IOCPU *target)
+ {
+ #if defined(J3Y17LTE)
+-	if (target != this) {
+-		panic("j3y17lte: secondary CPU signalling is not enabled");
++	const ml_topology_info_t *topology = ml_get_topology_info();
++	unsigned int logical = target->getCPUNumber();
++	if (logical >= topology->num_cpus || logical >= SWEET_SMP_MAX_CPUS) {
++		panic(CPU_PORT_NAME " CPU: invalid GICv2 SGI target %u", logical);
+ 	}
+-	j3y17lte_send_self_ipi();
++	j3y17lte_send_ipi(logical);
+ #else
+ 	const ml_topology_info_t *topology = ml_get_topology_info();
+ 	unsigned int logical = target->getCPUNumber();
+--- a/osfmk/arm64/machine_routines.c
++++ b/osfmk/arm64/machine_routines.c
+@@ -1088,6 +1088,10 @@
+ #endif
+ 
+-#if defined(SWEET)
++#if defined(J3Y17LTE)
++		cpu->die_cluster_id = (int)ml_readprop(child, "die-cluster-id", 0);
++		cpu->cluster_core_id = (int)ml_readprop(child, "cluster-core-id",
++		    cpu->phys_id & 0xff);
++#elif defined(SWEET)
+ 		/* Aff1 encodes the core on SM7150, not an Apple cluster ID. */
+ 		cpu->die_cluster_id = (int)ml_readprop(child, "die-cluster-id", 0);
+ 		cpu->cluster_core_id = (int)ml_readprop(child, "cluster-core-id", cpu->phys_id >> 8);
+--- a/osfmk/arm64/start.s
++++ b/osfmk/arm64/start.s
+@@ -311,10 +311,12 @@
+ 	msr		CNTHCTL_EL2, x1
+ 	msr		CNTVOFF_EL2, xzr
+ 	/* Permit ICC_SRE_EL1 and GIC CPU interface system-register access. */
++#if !defined(J3Y17LTE)
+ 	mrs		x1, ICC_SRE_EL2
+ 	orr		x1, x1, #1
+ 	orr		x1, x1, #8
+ 	msr		ICC_SRE_EL2, x1
++#endif
+ 	/* Known Armv8 SCTLR RES1 bits, M/C/I off, little endian. */
+ 	MOV64	x1, 0x30d00800
+ 	msr		SCTLR_EL1, x1
