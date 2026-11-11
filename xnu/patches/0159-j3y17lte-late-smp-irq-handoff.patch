@@ -1,0 +1,125 @@
+--- a/osfmk/arm/arm_init.c
++++ b/osfmk/arm/arm_init.c
+@@ -662,13 +662,17 @@
+ {
+ #if defined(J3Y17LTE)
+ 	extern volatile uint32_t j3_secondary_stage[4];
++	extern void j3y17lte_gic_init_cpu(unsigned int cpu);
+ 	unsigned int j3_cpu = cpu_data_ptr->cpu_number;
+-	if (j3_cpu < 4) {
+-		j3_secondary_stage[j3_cpu] = 0x50;
++#define J3_SECONDARY_STAGE(_stage) do { \
++	if (j3_cpu < 4) { \
++		j3_secondary_stage[j3_cpu] = (_stage); \
+ 		CleanPoC_DcacheRegion_Force((vm_offset_t)&j3_secondary_stage[j3_cpu],
+-		    sizeof(j3_secondary_stage[j3_cpu]));
+-		__builtin_arm_dsb(DSB_SY);
+-	}
++		    sizeof(j3_secondary_stage[j3_cpu])); \
++		__builtin_arm_dsb(DSB_SY); \
++	} \
++} while (0)
++	J3_SECONDARY_STAGE(0x50);
+ #endif
+ #if __ARM_PAN_AVAILABLE__
+ 	__builtin_arm_wsr("pan", 1);
+@@ -673,6 +677,9 @@
+ 
+ 
+ 	machine_set_current_thread(cpu_data_ptr->cpu_active_thread);
++#if defined(J3Y17LTE)
++	J3_SECONDARY_STAGE(0x51);
++#endif
+ 
+ #if APPLE_ARM64_ARCH_FAMILY
+ 	configure_late_apple_regs();
+@@ -711,7 +718,10 @@
+ 	cpu_machine_idle_init(FALSE);
+ 
+ 	cpu_init();
+-
++#if defined(J3Y17LTE)
++	J3_SECONDARY_STAGE(0x52);
++#endif
++ 
+ #ifdef  APPLETYPHOON
+ 	if ((cpus_defeatures & (0xF << 4 * cpu_data_ptr->cpu_number)) != 0) {
+ 		cpu_defeatures_set((cpus_defeatures >> 4 * cpu_data_ptr->cpu_number) & 0xF);
+@@ -739,7 +749,23 @@
+ 		commpage_update_timebase();
+ 	}
+ 	PE_init_cpu();
++#if defined(J3Y17LTE)
++	J3_SECONDARY_STAGE(0x53);
++	/*
++	 * J3 starts secondary CPUs after early boot.  Bring up the banked GICv2
++	 * CPU interface before the scheduler handoff so IRQs can be unmasked
++	 * safely there.  The old placement in SweetCPU::initCPU() is too late:
++	 * load_context() can allocate before cpu_machine_init() reaches IOCPU.
++	 */
++	if (j3_cpu != 0) {
++		j3y17lte_gic_init_cpu(j3_cpu);
++	}
++	J3_SECONDARY_STAGE(0x54);
++#endif
+ 
+ 	fiq_context_init(TRUE);
++#if defined(J3Y17LTE)
++	J3_SECONDARY_STAGE(0x55);
++#endif
+ 	cpu_data_ptr->rtcPop = EndOfAllTime;
+ 	timer_resync_deadlines();
+@@ -781,5 +809,20 @@
+ #endif
+ 
+ 
++#if defined(J3Y17LTE)
++	J3_SECONDARY_STAGE(0x56);
++	/*
++	 * fiq_context_init() requires IRQs masked, so unmask only after all
++	 * per-CPU interrupt/timer setup above is complete.  Stock early SMP can
++	 * allocate with IRQs masked because startup_phase is still EARLY_BOOT;
++	 * J3's IOKit-triggered late SMP cannot.  Enter load_context with IRQs
++	 * serviceable instead of weakening zalloc's safety assertion.
++	 */
++	if (j3_cpu != 0) {
++		(void)ml_set_interrupts_enabled(TRUE);
++	}
++	J3_SECONDARY_STAGE(0x57);
++#undef J3_SECONDARY_STAGE
++#endif
+ 	slave_main(NULL);
+ }
+--- a/iokit/Kernel/arm/SweetCPU.cpp
++++ b/iokit/Kernel/arm/SweetCPU.cpp
+@@ -230,6 +230,9 @@
+ 	assert(cpu_number() == (int)getCPUNumber());
+ 
+ #if defined(J3Y17LTE)
+-	j3y17lte_gic_init_cpu(getCPUNumber());
++	/* Secondary J3 cores initialize their banked GICv2 interface in arm_init_cpu. */
++	if (getCPUNumber() == 0) {
++		j3y17lte_gic_init_cpu(0);
++	}
+ #endif
+ 	ml_broadcast_cpu_event(CPU_BOOTED, getCPUNumber());
+--- a/iokit/Kernel/arm/SweetCPU.cpp
++++ b/iokit/Kernel/arm/SweetCPU.cpp
+@@ -194,10 +197,17 @@
+ 				switch (stage) {
+ 				case 0x00: panic("J3ST00");
+ 				case 0x11: panic("J3ST11");
+ 				case 0x12: panic("J3ST12");
+ 				case 0x13: panic("J3ST13");
+ 				case 0x20: panic("J3ST20");
+ 				case 0x50: panic("J3ST50");
++				case 0x51: panic("J3ST51");
++				case 0x52: panic("J3ST52");
++				case 0x53: panic("J3ST53");
++				case 0x54: panic("J3ST54");
++				case 0x55: panic("J3ST55");
++				case 0x56: panic("J3ST56");
++				case 0x57: panic("J3ST57");
+ 				case 0x60: panic("J3ST60");
+ 				default:   panic("J3STXX");
+ 				}
