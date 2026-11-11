@@ -1,0 +1,143 @@
+--- a/osfmk/arm64/cpu.c
++++ b/osfmk/arm64/cpu.c
+@@ -90,3 +90,6 @@
+ extern uintptr_t resume_idle_cpu;
+ extern uintptr_t start_cpu;
+ vm_address_t   start_cpu_paddr;
++#if defined(J3Y17LTE)
++volatile uint32_t j3_secondary_stage[4] __attribute__((aligned(64)));
++#endif
+@@ -946,3 +949,10 @@
+ #endif
++#if defined(J3Y17LTE)
++	/* Start with the trace line written back and invalidated on CPU0. */
++	j3_secondary_stage[cpu] = 0;
++	FlushPoC_DcacheRegion((vm_offset_t)&j3_secondary_stage[cpu],
++	    sizeof(j3_secondary_stage[cpu]));
++	__builtin_arm_dsb(DSB_SY);
++#endif
+ 		(void) PE_cpu_start(cpu_data_ptr->cpu_id, (vm_offset_t)NULL, (vm_offset_t)NULL);
+ 	}
+--- a/osfmk/arm64/start.s
++++ b/osfmk/arm64/start.s
+@@ -164,4 +164,13 @@
+ Lfound_cpu_data_entry:
++#if defined(J3Y17LTE)
++	mrs		x9, MPIDR_EL1
++	and		x9, x9, #0xff
++	adrp	x10, EXT(j3_secondary_stage)@page
++	add		x10, x10, EXT(j3_secondary_stage)@pageoff
++	mov		w11, #0x30
++	str		w11, [x10, x9, lsl #2]
++	dsb		sy
++#endif
+ 	adrp	x20, EXT(const_boot_args)@page
+ 	add		x20, x20, EXT(const_boot_args)@pageoff
+ 	ldr		x0, [x21, CPU_RESET_HANDLER]
+@@ -346,5 +355,16 @@
+ LEXT(sweet_secondary_entry)
+ 	msr		DAIFSet, #0xf
+ 	mrs		x1, CurrentEL
++#if defined(J3Y17LTE)
++	/* 0x10 + CurrentEL: proves PSCI entry and records the incoming EL. */
++	mrs		x9, MPIDR_EL1
++	and		x9, x9, #0xff
++	adrp	x10, EXT(j3_secondary_stage)@page
++	add		x10, x10, EXT(j3_secondary_stage)@pageoff
++	lsr		x11, x1, #2
++	add		x11, x11, #0x10
++	str		w11, [x10, x9, lsl #2]
++	dsb		sy
++#endif
+ 	cmp		x1, #0x4
+ 	b.eq	Lsweet_secondary_el1
+@@ -382,4 +402,13 @@
+ Lsweet_secondary_el1:
++#if defined(J3Y17LTE)
++	mrs		x9, MPIDR_EL1
++	and		x9, x9, #0xff
++	adrp	x10, EXT(j3_secondary_stage)@page
++	add		x10, x10, EXT(j3_secondary_stage)@pageoff
++	mov		w11, #0x20
++	str		w11, [x10, x9, lsl #2]
++	dsb		sy
++#endif
+ 	/* x0 is deliberately unused; reset_vector selects CPU data by MPIDR. */
+ 	msr		SPSel, #1
+ 	b		EXT(LowResetVectorBase)
+@@ -397,3 +426,12 @@
+ start_cpu:
++#if defined(J3Y17LTE)
++	mrs		x9, MPIDR_EL1
++	and		x9, x9, #0xff
++	adrp	x10, EXT(j3_secondary_stage)@page
++	add		x10, x10, EXT(j3_secondary_stage)@pageoff
++	mov		w11, #0x40
++	str		w11, [x10, x9, lsl #2]
++	dsb		sy
++#endif
+ #if defined(KERNEL_INTEGRITY_KTRR) || defined(KERNEL_INTEGRITY_CTRR)
+ 	// This is done right away in reset vector for pre-KTRR devices
+--- a/osfmk/arm/arm_init.c
++++ b/osfmk/arm/arm_init.c
+@@ -660,5 +660,15 @@
+ arm_init_cpu(
+ 	cpu_data_t      *cpu_data_ptr)
+ {
++#if defined(J3Y17LTE)
++	extern volatile uint32_t j3_secondary_stage[4];
++	unsigned int j3_cpu = cpu_data_ptr->cpu_number;
++	if (j3_cpu < 4) {
++		j3_secondary_stage[j3_cpu] = 0x50;
++		CleanPoC_DcacheRegion_Force((vm_offset_t)&j3_secondary_stage[j3_cpu],
++		    sizeof(j3_secondary_stage[j3_cpu]));
++		__builtin_arm_dsb(DSB_SY);
++	}
++#endif
+ #if __ARM_PAN_AVAILABLE__
+ 	__builtin_arm_wsr("pan", 1);
+--- a/osfmk/arm/cpu_common.c
++++ b/osfmk/arm/cpu_common.c
+@@ -681,7 +681,17 @@
+ cpu_machine_init(void)
+ {
+ 	static boolean_t started = FALSE;
+ 	cpu_data_t      *cpu_data_ptr;
+ 
+ 	cpu_data_ptr = getCpuDatap();
++#if defined(J3Y17LTE)
++	extern volatile uint32_t j3_secondary_stage[4];
++	if (cpu_data_ptr->cpu_number < 4) {
++		j3_secondary_stage[cpu_data_ptr->cpu_number] = 0x60;
++		CleanPoC_DcacheRegion_Force(
++		    (vm_offset_t)&j3_secondary_stage[cpu_data_ptr->cpu_number],
++		    sizeof(j3_secondary_stage[cpu_data_ptr->cpu_number]));
++		__builtin_arm_dsb(DSB_SY);
++	}
++#endif
+ 	started = ((cpu_data_ptr->cpu_flags & StartedState) == StartedState);
+--- a/iokit/Kernel/arm/SweetCPU.cpp
++++ b/iokit/Kernel/arm/SweetCPU.cpp
+@@ -22,5 +22,6 @@
+ extern "C" boolean_t sweet_cpu_signal_is_enabled(unsigned int cpu);
+ #if defined(J3Y17LTE)
+ extern "C" void j3y17lte_send_ipi(unsigned int cpu);
+ extern "C" void j3y17lte_gic_init_cpu(unsigned int cpu);
++extern "C" volatile uint32_t j3_secondary_stage[4];
+ #define CPU_PORT_NAME "J3Y17LTE"
+@@ -168,8 +169,15 @@
+ 		while (__atomic_load_n(&cpu->initialized, __ATOMIC_ACQUIRE) == 0 ||
+ 		    !sweet_cpu_signal_is_enabled(i)) {
+ 			if (mach_absolute_time() > deadline) {
++#if defined(J3Y17LTE)
++				uint32_t stage = i < 4 ? j3_secondary_stage[i] : 0xffffffffU;
++				IOLog("J3 SMP: cpu=%u stage=0x%x mpidr=0x%x NOT alive after 5s\n",
++				    i, stage, topology->cpus[i].phys_id);
++				panic("J3SMPTO cpu=%u stage=0x%x", i, stage);
++#else
+ 				IOLog(CPU_PORT_NAME " CPU: cpu=%u mpidr=0x%x NOT alive after 5s\n",
+ 				    i, topology->cpus[i].phys_id);
+ 				panic(CPU_PORT_NAME " CPU: cpu=%u startup timeout (reset/MMU/GIC/SGI)", i);
++#endif
+ 			}
+ 			IOSleep(1);
