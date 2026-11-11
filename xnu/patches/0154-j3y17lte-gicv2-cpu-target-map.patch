@@ -1,6 +1,6 @@
 --- a/pexpert/arm/pe_fiq.c
 +++ b/pexpert/arm/pe_fiq.c
-@@ -225,5 +225,6 @@
+@@ -225,6 +225,7 @@
  /* Exynos7570 GIC-400: distributor and CPU interface, both non-secure Group 1. */
  static vm_offset_t j3_gicd_base;
  static vm_offset_t j3_gicc_base;
@@ -8,7 +8,7 @@
  
  static uint32_t
  j3_gic_read32(vm_offset_t base, unsigned int offset)
-@@ -249,20 +250,63 @@
+@@ -249,21 +250,64 @@
  void
  j3y17lte_send_ipi(unsigned int cpu)
  {
