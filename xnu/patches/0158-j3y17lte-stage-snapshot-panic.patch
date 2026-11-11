@@ -13,7 +13,7 @@
 +					 * j3_secondary_stage is 64-byte aligned and all four
 +					 * diagnostic words live in that single cache line.
 +					 */
-+					uintptr_t line = (uintptr_t)&j3_secondary_stage[i] & ~((uintptr_t)63);
++					vm_offset_t line = ((vm_offset_t)&j3_secondary_stage[i]) & ~((vm_offset_t)63);
 +					__asm__ volatile("dc ivac, %0" :: "r"(line) : "memory");
 +					__builtin_arm_dsb(DSB_SY);
 +				}
