@@ -1,45 +1,36 @@
+--- a/pexpert/arm/pe_fiq.c
++++ b/pexpert/arm/pe_fiq.c
+@@ -225,3 +225,4 @@
+ static vm_offset_t j3_gicd_base;
+ static vm_offset_t j3_gicc_base;
+ static volatile uint8_t j3_gic_cpu_map[4];
++volatile uint32_t j3_secondary_stage[4] __attribute__((aligned(64)));
 --- a/osfmk/arm64/cpu.c
 +++ b/osfmk/arm64/cpu.c
-@@ -90,3 +90,6 @@
- extern uintptr_t resume_idle_cpu;
- extern uintptr_t start_cpu;
- vm_address_t   start_cpu_paddr;
-+#if defined(J3Y17LTE)
-+volatile uint32_t j3_secondary_stage[4] __attribute__((aligned(64)));
-+#endif
-@@ -946,3 +949,10 @@
+@@ -929,11 +929,15 @@
+ 		CleanPoC_DcacheRegion_Force((vm_offset_t)CpuDataEntries, sizeof(CpuDataEntries));
+ 		CleanPoC_DcacheRegion_Force((vm_offset_t)cpu_data_ptr, sizeof(cpu_data_t));
+ #if defined(J3Y17LTE)
+ 		/* CPU1 enters with caches off, then machine_set_current_thread() reads
+ 		 * first_thread->machine.CpuDatap immediately. Push that freshly-bound
+ 		 * per-CPU thread state to PoC before PSCI releases the secondary core. */
+ 		CleanPoC_DcacheRegion_Force((vm_offset_t)&first_thread->machine,
+ 		    sizeof(first_thread->machine));
++		extern volatile uint32_t j3_secondary_stage[4];
++		j3_secondary_stage[cpu] = 0;
++		FlushPoC_DcacheRegion((vm_offset_t)&j3_secondary_stage[cpu],
++		    sizeof(j3_secondary_stage[cpu]));
  #endif
-+#if defined(J3Y17LTE)
-+	/* Start with the trace line written back and invalidated on CPU0. */
-+	j3_secondary_stage[cpu] = 0;
-+	FlushPoC_DcacheRegion((vm_offset_t)&j3_secondary_stage[cpu],
-+	    sizeof(j3_secondary_stage[cpu]));
-+	__builtin_arm_dsb(DSB_SY);
-+#endif
- 		(void) PE_cpu_start(cpu_data_ptr->cpu_id, (vm_offset_t)NULL, (vm_offset_t)NULL);
- 	}
+ 		CleanPoC_DcacheRegion_Force((vm_offset_t)&ResetHandlerData, sizeof(ResetHandlerData));
+ 		CleanPoC_DcacheRegion_Force((vm_offset_t)BootArgs, sizeof(*BootArgs));
 --- a/osfmk/arm64/start.s
 +++ b/osfmk/arm64/start.s
-@@ -164,4 +164,13 @@
- Lfound_cpu_data_entry:
-+#if defined(J3Y17LTE)
-+	mrs		x9, MPIDR_EL1
-+	and		x9, x9, #0xff
-+	adrp	x10, EXT(j3_secondary_stage)@page
-+	add		x10, x10, EXT(j3_secondary_stage)@pageoff
-+	mov		w11, #0x30
-+	str		w11, [x10, x9, lsl #2]
-+	dsb		sy
-+#endif
- 	adrp	x20, EXT(const_boot_args)@page
- 	add		x20, x20, EXT(const_boot_args)@pageoff
- 	ldr		x0, [x21, CPU_RESET_HANDLER]
-@@ -346,5 +355,16 @@
+@@ -346,7 +346,18 @@
  LEXT(sweet_secondary_entry)
  	msr		DAIFSet, #0xf
  	mrs		x1, CurrentEL
 +#if defined(J3Y17LTE)
-+	/* 0x10 + CurrentEL: proves PSCI entry and records the incoming EL. */
++	/* 0x10 + EL: proves PSCI entered the secondary and records incoming EL. */
 +	mrs		x9, MPIDR_EL1
 +	and		x9, x9, #0xff
 +	adrp	x10, EXT(j3_secondary_stage)@page
@@ -51,7 +42,9 @@
 +#endif
  	cmp		x1, #0x4
  	b.eq	Lsweet_secondary_el1
-@@ -382,4 +402,13 @@
+ 	cmp		x1, #0x8
+ 	b.ne	Lsweet_secondary_bad_el
+@@ -382,4 +393,13 @@
  Lsweet_secondary_el1:
 +#if defined(J3Y17LTE)
 +	mrs		x9, MPIDR_EL1
@@ -65,19 +58,6 @@
  	/* x0 is deliberately unused; reset_vector selects CPU data by MPIDR. */
  	msr		SPSel, #1
  	b		EXT(LowResetVectorBase)
-@@ -397,3 +426,12 @@
- start_cpu:
-+#if defined(J3Y17LTE)
-+	mrs		x9, MPIDR_EL1
-+	and		x9, x9, #0xff
-+	adrp	x10, EXT(j3_secondary_stage)@page
-+	add		x10, x10, EXT(j3_secondary_stage)@pageoff
-+	mov		w11, #0x40
-+	str		w11, [x10, x9, lsl #2]
-+	dsb		sy
-+#endif
- #if defined(KERNEL_INTEGRITY_KTRR) || defined(KERNEL_INTEGRITY_CTRR)
- 	// This is done right away in reset vector for pre-KTRR devices
 --- a/osfmk/arm/arm_init.c
 +++ b/osfmk/arm/arm_init.c
 @@ -660,5 +660,15 @@
