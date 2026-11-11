@@ -16,6 +16,6 @@ The public source patch stack ends at:
 
 `xnu/patches/0152-j3y17lte-input.patch`
 
-The later experimental SMP work is intentionally not part of this branch.
+Only stable booting patches are here.
 
 This repository contains source patches only. Compiled kernels, recovery images, build artifacts, private CI configuration, and internal development notes are not distributed here.
