@@ -1,0 +1,28 @@
+--- a/iokit/Kernel/arm/SweetCPU.cpp
++++ b/iokit/Kernel/arm/SweetCPU.cpp
+@@ -207,9 +207,25 @@
+ void
+ SweetCPU::initCPU(bool boot)
+ {
++#if defined(J3Y17LTE)
++	uint32_t was_initialized = __atomic_load_n(&initialized, __ATOMIC_ACQUIRE);
++	kprintf("J3Y17LTE CPU: initCPU obj=%u cur=%d boot=%u initialized=%u mpidr=0x%llx\\n",
++	    getCPUNumber(), cpu_number(), boot ? 1U : 0U, was_initialized,
++	    __builtin_arm_rsr64("MPIDR_EL1") & 0xffffULL);
++	/*
++	 * XNU says boot=true on the first startup of a CPU. During J3 SMP
++	 * bring-up we have observed CPU1 reaching this driver with boot=false.
++	 * Only tolerate that on the object's first-ever init; a genuine later
++	 * resume/restart remains unsupported and must still stop here.
++	 */
++	if (!boot && was_initialized != 0) {
++		panic(CPU_PORT_NAME " CPU: cpu=%u resume is not implemented", getCPUNumber());
++	}
++#else
+ 	if (!boot) {
+ 		panic(CPU_PORT_NAME " CPU: cpu=%u resume is not implemented", getCPUNumber());
+ 	}
++#endif
+ 	assert(cpu_number() == (int)getCPUNumber());
+ 
+ #if defined(J3Y17LTE)
