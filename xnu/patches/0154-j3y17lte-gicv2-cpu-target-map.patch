@@ -1,0 +1,105 @@
+--- a/pexpert/arm/pe_fiq.c
++++ b/pexpert/arm/pe_fiq.c
+@@ -225,5 +225,6 @@
+ /* Exynos7570 GIC-400: distributor and CPU interface, both non-secure Group 1. */
+ static vm_offset_t j3_gicd_base;
+ static vm_offset_t j3_gicc_base;
++static volatile uint8_t j3_gic_cpu_map[4];
+ 
+ static uint32_t
+ j3_gic_read32(vm_offset_t base, unsigned int offset)
+@@ -249,20 +250,63 @@
+ void
+ j3y17lte_send_ipi(unsigned int cpu)
+ {
++	uint32_t target_mask;
++
+ 	if (cpu >= 4) {
+ 		panic("j3y17lte: invalid GICv2 SGI target %u", cpu);
+ 	}
++	target_mask = j3_gic_cpu_map[cpu];
++	if (target_mask == 0) {
++		panic("j3y17lte: GICv2 CPU %u has no target mask", cpu);
++	}
+ 	__builtin_arm_dsb(DSB_ISHST);
+-	/* GICD_SGIR: target-list filter 0, CPU target bit, SGI 1. */
+-	j3_gic_write32(j3_gicd_base, 0xf00, (1U << (16 + cpu)) | 1U);
++	/* GICD_SGIR: target-list filter 0, discovered CPU-interface mask, SGI 1. */
++	j3_gic_write32(j3_gicd_base, 0xf00, (target_mask << 16) | 1U);
+ 	__builtin_arm_isb(ISB_SY);
+ }
+ 
++static uint8_t
++j3y17lte_current_cpu_target_mask(void)
++{
++	/*
++	 * GICv2 does not require CPU-interface target bits to match XNU's
++	 * logical CPU numbers. ITARGETSR0-7 are banked/read-only for SGIs/PPIs
++	 * and expose the current CPU interface's physical target mask.
++	 * Fold the four bytes exactly like Linux irq-gic does.
++	 */
++	for (unsigned int i = 0; i < 32; i += 4) {
++		uint32_t mask = j3_gic_read32(j3_gicd_base, 0x800 + i);
++		mask |= mask >> 16;
++		mask |= mask >> 8;
++		mask &= 0xffU;
++		if (mask != 0) {
++			return (uint8_t)mask;
++		}
++	}
++	return 0;
++}
++
+ void
+-j3y17lte_gic_init_cpu(void)
++j3y17lte_gic_init_cpu(unsigned int cpu)
+ {
++	uint8_t cpu_mask;
++
++	if (cpu >= 4) {
++		panic("j3y17lte: invalid GICv2 CPU index %u", cpu);
++	}
+ 	if (!j3_gicd_base || !j3_gicc_base) {
+ 		panic("j3y17lte: GICv2 per-CPU init before global mapping");
+ 	}
++	cpu_mask = j3y17lte_current_cpu_target_mask();
++	if (cpu_mask == 0 || (cpu_mask & (cpu_mask - 1U)) != 0) {
++		panic("j3y17lte: CPU %u invalid GICv2 target mask %#x", cpu, cpu_mask);
++	}
++	for (unsigned int i = 0; i < 4; i++) {
++		if (i != cpu && j3_gic_cpu_map[i] == cpu_mask) {
++			panic("j3y17lte: CPU %u duplicates GICv2 target mask %#x", cpu, cpu_mask);
++		}
++	}
++	j3_gic_cpu_map[cpu] = cpu_mask;
++	__builtin_arm_dsb(DSB_ISHST);
+ 	/* SGI/PPI distributor registers and the CPU interface are banked per core. */
+ 	j3_gic_write32(j3_gicd_base, 0x080,
+ 	    j3_gic_read32(j3_gicd_base, 0x080) | (1U << 27) | (1U << 1));
+@@ -301,7 +341,7 @@
+ 	if (!j3_gicd_base || !j3_gicc_base) {
+ 		panic("j3y17lte: cannot map GICv2");
+ 	}
+-	j3y17lte_gic_init_cpu();
++	j3y17lte_gic_init_cpu(0);
+ 	j3_gic_write32(j3_gicd_base, 0x000,
+ 	    j3_gic_read32(j3_gicd_base, 0x000) | 1U);
+ 	__builtin_arm_dsb(DSB_SY);
+--- a/iokit/Kernel/arm/SweetCPU.cpp
++++ b/iokit/Kernel/arm/SweetCPU.cpp
+@@ -22,7 +22,7 @@
+ extern "C" boolean_t sweet_cpu_signal_is_enabled(unsigned int cpu);
+ #if defined(J3Y17LTE)
+ extern "C" void j3y17lte_send_ipi(unsigned int cpu);
+-extern "C" void j3y17lte_gic_init_cpu(void);
++extern "C" void j3y17lte_gic_init_cpu(unsigned int cpu);
+ #define CPU_PORT_NAME "J3Y17LTE"
+ #else
+ #define CPU_PORT_NAME "SWEET"
+@@ -213,5 +213,5 @@
+ 	assert(cpu_number() == (int)getCPUNumber());
+ 
+ #if defined(J3Y17LTE)
+-	j3y17lte_gic_init_cpu();
++	j3y17lte_gic_init_cpu(getCPUNumber());
+ #endif
