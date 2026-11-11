@@ -1,6 +1,6 @@
 --- a/osfmk/arm/arm_init.c
 +++ b/osfmk/arm/arm_init.c
-@@ -662,13 +662,17 @@
+@@ -662,11 +662,8 @@
  {
  #if defined(J3Y17LTE)
  	extern volatile uint32_t j3_secondary_stage[4];
@@ -8,21 +8,13 @@
  	unsigned int j3_cpu = cpu_data_ptr->cpu_number;
 -	if (j3_cpu < 4) {
 -		j3_secondary_stage[j3_cpu] = 0x50;
-+#define J3_SECONDARY_STAGE(_stage) do { \
-+	if (j3_cpu < 4) { \
-+		j3_secondary_stage[j3_cpu] = (_stage); \
- 		CleanPoC_DcacheRegion_Force((vm_offset_t)&j3_secondary_stage[j3_cpu],
+-		CleanPoC_DcacheRegion_Force((vm_offset_t)&j3_secondary_stage[j3_cpu],
 -		    sizeof(j3_secondary_stage[j3_cpu]));
 -		__builtin_arm_dsb(DSB_SY);
 -	}
-+		    sizeof(j3_secondary_stage[j3_cpu])); \
-+		__builtin_arm_dsb(DSB_SY); \
-+	} \
-+} while (0)
++#define J3_SECONDARY_STAGE(_stage) do { if (j3_cpu < 4) { j3_secondary_stage[j3_cpu] = (_stage); CleanPoC_DcacheRegion_Force((vm_offset_t)&j3_secondary_stage[j3_cpu], sizeof(j3_secondary_stage[j3_cpu])); __builtin_arm_dsb(DSB_SY); } } while (0)
 +	J3_SECONDARY_STAGE(0x50);
  #endif
- #if __ARM_PAN_AVAILABLE__
- 	__builtin_arm_wsr("pan", 1);
 @@ -673,6 +677,9 @@
  
  
