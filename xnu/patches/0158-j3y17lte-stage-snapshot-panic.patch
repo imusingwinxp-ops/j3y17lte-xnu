@@ -1,23 +1,20 @@
 --- a/iokit/Kernel/arm/SweetCPU.cpp
 +++ b/iokit/Kernel/arm/SweetCPU.cpp
-@@ -17,6 +17,7 @@
- #include <kern/processor.h>
- #include <kern/thread.h>
- #include <mach/mach_time.h>
-+#include <arm/caches_internal.h>
- #include <pexpert/pexpert.h>
- 
- extern "C" void sweet_secondary_entry(void);
-@@ -171,9 +172,27 @@
+@@ -171,9 +171,32 @@
  			if (mach_absolute_time() > deadline) {
  #if defined(J3Y17LTE)
 +				if (i < 4) {
 +					/*
-+					 * CPU1 writes this while caches may still be off.
-+					 * Drop CPU0's clean/stale copy before sampling it.
++					 * CPU1 writes the trace slot with caches off. CPU0's
++					 * copy was cleaned before PSCI release and is not
++					 * modified afterwards, so invalidate-only is required
++					 * here: a clean+invalidate could write stale zero back.
++					 *
++					 * j3_secondary_stage is 64-byte aligned and all four
++					 * diagnostic words live in that single cache line.
 +					 */
-+					FlushPoC_DcacheRegion((vm_offset_t)&j3_secondary_stage[i],
-+					    sizeof(j3_secondary_stage[i]));
++					uintptr_t line = (uintptr_t)&j3_secondary_stage[i] & ~((uintptr_t)63);
++					__asm__ volatile("dc ivac, %0" :: "r"(line) : "memory");
 +					__builtin_arm_dsb(DSB_SY);
 +				}
  				uint32_t stage = i < 4 ? j3_secondary_stage[i] : 0xffffffffU;
