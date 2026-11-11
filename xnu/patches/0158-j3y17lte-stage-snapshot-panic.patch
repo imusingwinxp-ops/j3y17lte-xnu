@@ -1,0 +1,39 @@
+--- a/iokit/Kernel/arm/SweetCPU.cpp
++++ b/iokit/Kernel/arm/SweetCPU.cpp
+@@ -17,6 +17,7 @@
+ #include <kern/processor.h>
+ #include <kern/thread.h>
+ #include <mach/mach_time.h>
++#include <arm/caches_internal.h>
+ #include <pexpert/pexpert.h>
+ 
+ extern "C" void sweet_secondary_entry(void);
+@@ -171,9 +172,27 @@
+ 			if (mach_absolute_time() > deadline) {
+ #if defined(J3Y17LTE)
++				if (i < 4) {
++					/*
++					 * CPU1 writes this while caches may still be off.
++					 * Drop CPU0's clean/stale copy before sampling it.
++					 */
++					FlushPoC_DcacheRegion((vm_offset_t)&j3_secondary_stage[i],
++					    sizeof(j3_secondary_stage[i]));
++					__builtin_arm_dsb(DSB_SY);
++				}
+ 				uint32_t stage = i < 4 ? j3_secondary_stage[i] : 0xffffffffU;
+ 				IOLog("J3 SMP: cpu=%u stage=0x%x mpidr=0x%x NOT alive after 5s\n",
+ 				    i, stage, topology->cpus[i].phys_id);
+-				panic("J3SMPTO cpu=%u stage=0x%x", i, stage);
++				switch (stage) {
++				case 0x00: panic("J3ST00");
++				case 0x11: panic("J3ST11");
++				case 0x12: panic("J3ST12");
++				case 0x13: panic("J3ST13");
++				case 0x20: panic("J3ST20");
++				case 0x50: panic("J3ST50");
++				case 0x60: panic("J3ST60");
++				default:   panic("J3STXX");
++				}
+ #else
+ 				IOLog(CPU_PORT_NAME " CPU: cpu=%u mpidr=0x%x NOT alive after 5s\n",
+ 				    i, topology->cpus[i].phys_id);
