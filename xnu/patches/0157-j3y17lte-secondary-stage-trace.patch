@@ -1,10 +1,3 @@
---- a/pexpert/arm/pe_fiq.c
-+++ b/pexpert/arm/pe_fiq.c
-@@ -225,3 +225,4 @@
- static vm_offset_t j3_gicd_base;
- static vm_offset_t j3_gicc_base;
- static volatile uint8_t j3_gic_cpu_map[4];
-+volatile uint32_t j3_secondary_stage[4] __attribute__((aligned(64)));
 --- a/osfmk/arm64/cpu.c
 +++ b/osfmk/arm64/cpu.c
 @@ -929,11 +929,15 @@
@@ -98,12 +91,14 @@
  	started = ((cpu_data_ptr->cpu_flags & StartedState) == StartedState);
 --- a/iokit/Kernel/arm/SweetCPU.cpp
 +++ b/iokit/Kernel/arm/SweetCPU.cpp
-@@ -22,5 +22,6 @@
+@@ -22,5 +22,8 @@
  extern "C" boolean_t sweet_cpu_signal_is_enabled(unsigned int cpu);
  #if defined(J3Y17LTE)
  extern "C" void j3y17lte_send_ipi(unsigned int cpu);
  extern "C" void j3y17lte_gic_init_cpu(unsigned int cpu);
-+extern "C" volatile uint32_t j3_secondary_stage[4];
++extern "C" {
++volatile uint32_t j3_secondary_stage[4] = { 0, 0, 0, 0 };
++}
  #define CPU_PORT_NAME "J3Y17LTE"
 @@ -168,8 +169,15 @@
  		while (__atomic_load_n(&cpu->initialized, __ATOMIC_ACQUIRE) == 0 ||
