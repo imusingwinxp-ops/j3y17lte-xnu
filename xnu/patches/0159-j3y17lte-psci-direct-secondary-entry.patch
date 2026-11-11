@@ -1,0 +1,89 @@
+--- a/osfmk/arm64/start.s
++++ b/osfmk/arm64/start.s
+@@ -402,6 +402,64 @@
+ 	str		w11, [x10, x9, lsl #2]
+ 	dsb		sy
+ #endif
+-	/* x0 is deliberately unused; reset_vector selects CPU data by MPIDR. */
+ 	msr		SPSel, #1
++#if defined(J3Y17LTE)
++	/*
++	 * PSCI CPU_ON guarantees the caller's context_id in x0 on first
++	 * non-secure entry. J3 passes the logical CPU number there.
++	 *
++	 * A PSCI cold-started Cortex-A53 does not need Apple's reset-handler
++	 * discovery layer here. Select the already-published physical cpu_data
++	 * entry directly, validate it against MPIDR, recreate the x20/x21/lr
++	 * contract of start_cpu, then rejoin XNU's normal MMU path.
++	 */
++	cmp		x0, #4
++	b.hs	Lsweet_secondary_bad_el
++
++	adrp	x19, EXT(ResetHandlerData)@page
++	add		x19, x19, EXT(ResetHandlerData)@pageoff
++	ldr		x1, [x19, CPU_DATA_ENTRIES]
++	add		x1, x1, x0, lsl #4
++	ldr		x21, [x1, CPU_DATA_PADDR]
++	cbz		x21, Lsweet_secondary_bad_el
++
++	/* Stage 0x30: context_id selected a published cpu_data entry. */
++	mrs		x9, MPIDR_EL1
++	and		x10, x9, #0xff
++	adrp	x11, EXT(j3_secondary_stage)@page
++	add		x11, x11, EXT(j3_secondary_stage)@pageoff
++	mov		w12, #0x30
++	str		w12, [x11, x10, lsl #2]
++	dsb		sy
++
++	ldr		w2, [x21, CPU_PHYS_ID]
++	and		x3, x9, #0xff
++	cmp		x3, x2
++	b.ne	Lsweet_secondary_bad_el
++
++	/* Stage 0x31: cpu_data phys_id agrees with this core's MPIDR Aff0. */
++	mov		w12, #0x31
++	str		w12, [x11, x10, lsl #2]
++	dsb		sy
++
++	msr		OSLAR_EL1, xzr
++	adrp	x4, EXT(LowExceptionVectorBase)@page
++	add		x4, x4, EXT(LowExceptionVectorBase)@pageoff
++	msr		VBAR_EL1, x4
++#if HAS_BP_RET
++	bl		EXT(set_bp_ret)
++#endif
++	adrp	x20, EXT(const_boot_args)@page
++	add		x20, x20, EXT(const_boot_args)@pageoff
++	adrp	lr, EXT(arm_init_cpu)@page
++	add		lr, lr, EXT(arm_init_cpu)@pageoff
++
++	/* Stage 0x40: complete start_cpu register contract is ready. */
++	mov		w12, #0x40
++	str		w12, [x11, x10, lsl #2]
++	dsb		sy
++	b		start_cpu
++#else
++	/* Donor path: reset_vector discovers cpu_data by MPIDR. */
+ 	b		EXT(LowResetVectorBase)
++#endif
+--- a/iokit/Kernel/arm/SweetCPU.cpp
++++ b/iokit/Kernel/arm/SweetCPU.cpp
+@@ -184,13 +184,18 @@
+ 				uint32_t stage = i < 4 ? j3_secondary_stage[i] : 0xffffffffU;
+ 				IOLog("J3 SMP: cpu=%u stage=0x%x mpidr=0x%x NOT alive after 5s\n",
+ 				    i, stage, topology->cpus[i].phys_id);
++				/* Keep the stage line visible before panic/debugger output. */
++				IOSleep(1500);
+ 				switch (stage) {
+ 				case 0x00: panic("J3ST00");
+ 				case 0x11: panic("J3ST11");
+ 				case 0x12: panic("J3ST12");
+ 				case 0x13: panic("J3ST13");
+ 				case 0x20: panic("J3ST20");
++				case 0x30: panic("J3ST30");
++				case 0x31: panic("J3ST31");
++				case 0x40: panic("J3ST40");
+ 				case 0x50: panic("J3ST50");
+ 				case 0x60: panic("J3ST60");
+ 				default:   panic("J3STXX");
+ 				}
