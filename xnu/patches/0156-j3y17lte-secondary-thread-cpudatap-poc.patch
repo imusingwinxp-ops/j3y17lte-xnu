@@ -1,0 +1,15 @@
+--- a/osfmk/arm64/cpu.c
++++ b/osfmk/arm64/cpu.c
+@@ -929,5 +929,12 @@
+ 		CleanPoC_DcacheRegion_Force((vm_offset_t)CpuDataEntries, sizeof(CpuDataEntries));
+ 		CleanPoC_DcacheRegion_Force((vm_offset_t)cpu_data_ptr, sizeof(cpu_data_t));
++#if defined(J3Y17LTE)
++		/* CPU1 enters with caches off, then machine_set_current_thread() reads
++		 * first_thread->machine.CpuDatap immediately. Push that freshly-bound
++		 * per-CPU thread state to PoC before PSCI releases the secondary core. */
++		CleanPoC_DcacheRegion_Force((vm_offset_t)&first_thread->machine,
++		    sizeof(first_thread->machine));
++#endif
+ 		CleanPoC_DcacheRegion_Force((vm_offset_t)&ResetHandlerData, sizeof(ResetHandlerData));
+ 		CleanPoC_DcacheRegion_Force((vm_offset_t)BootArgs, sizeof(*BootArgs));
+ 		CleanPoC_DcacheRegion_Force((vm_offset_t)&sysreg_restore, sizeof(sysreg_restore));
