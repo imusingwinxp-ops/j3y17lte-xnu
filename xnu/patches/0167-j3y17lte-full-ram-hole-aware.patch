@@ -28,10 +28,7 @@
 +	const_boot_args.memSizeActual = 0x7e800000ULL;
 +#endif
  	BootArgs = args = &const_boot_args;
-@@ -468,13 +487,22 @@
- 
- 	processor_bootstrap();
- 
+@@ -468,7 +487,16 @@
  	if (PE_parse_boot_argn("maxmem", &maxmem, sizeof(maxmem))) {
  		xmaxmem = (uint64_t) maxmem * (1024 * 1024);
 +#if defined(J3Y17LTE)
@@ -48,9 +45,6 @@
  		xmaxmem = 0;
  	}
 +#endif
- 
- #if SCHED_HYGIENE_DEBUG
- 	{
 @@ -632,5 +659,12 @@
  	sweet_early_mark(33, "dram-size found");
  
