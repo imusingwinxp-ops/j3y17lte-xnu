@@ -1,0 +1,21 @@
+--- a/osfmk/kern/sched_prim.c
++++ b/osfmk/kern/sched_prim.c
+@@ -3373,6 +3373,7 @@
+ {
+ 	processor_t             processor = self->last_processor;
+ 	bool was_idle = false;
++	bool processor_bootstrap = (thread == THREAD_NULL);
+ 
+ 	assert(processor == current_processor());
+ 	assert(self == current_thread_volatile());
+@@ -3755,7 +3756,9 @@
+ 		running_timers_activate(processor);
+ 		processor->first_timeslice = TRUE;
+ 	} else {
+-		running_timers_deactivate(processor);
++		if (!processor_bootstrap) {
++			running_timers_deactivate(processor);
++		}
+ 		processor->first_timeslice = FALSE;
+ 		thread_tell_urgency(THREAD_URGENCY_NONE, 0, 0, 0, self);
+ 	}
