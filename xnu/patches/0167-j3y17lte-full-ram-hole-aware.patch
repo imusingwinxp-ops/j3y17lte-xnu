@@ -1,9 +1,11 @@
 --- a/osfmk/arm/arm_init.c
 +++ b/osfmk/arm/arm_init.c
-@@ -350,6 +350,26 @@
+@@ -350,8 +350,28 @@
  
  	arm_slide_rebase_and_sign_image();
  
+ 	/* If kernel integrity is supported, use a constant copy of the boot args. */
+ 	const_boot_args = *args;
 +#if defined(J3Y17LTE)
 +	/*
 +	 * Exynos7570 J3Y17LTE DRAM topology:
@@ -12,20 +14,16 @@
 +	 *   0x80000000..0xc0000000  1024 MiB RAM
 +	 *
 +	 * BootArgs has only one base/size span, so advertise the full 2 GiB
-+	 * physical aperture here and record the actual usable 2024 MiB
-+	 * separately. The J3 pmap changes below reject/skip the 24 MiB hole.
-+	 * This must happen before the constant BootArgs copy and before XNU
-+	 * chooses its >1 GiB 16 KiB software VM page size.
++	 * physical aperture and record the actual usable 2024 MiB separately.
++	 * The J3 pmap changes below reject/skip the 24 MiB hole. Do this on
++	 * XNU's private BootArgs copy, before the >1 GiB page-size decision.
 +	 */
-+	if (args->physBase != 0x40000000ULL) {
-+		panic("J3 RAM: unexpected physBase 0x%llx", args->physBase);
++	if (const_boot_args.physBase != 0x40000000ULL) {
++		panic("J3 RAM: unexpected physBase 0x%llx", const_boot_args.physBase);
 +	}
-+	args->memSize = 0x80000000ULL;
-+	args->memSizeActual = 0x7e800000ULL;
++	const_boot_args.memSize = 0x80000000ULL;
++	const_boot_args.memSizeActual = 0x7e800000ULL;
 +#endif
-+
- 	/* If kernel integrity is supported, use a constant copy of the boot args. */
- 	const_boot_args = *args;
  	BootArgs = args = &const_boot_args;
 @@ -468,13 +487,22 @@
  
