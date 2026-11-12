@@ -1,6 +1,6 @@
 --- a/bsd/dev/j3y17lte_input.c
 +++ b/bsd/dev/j3y17lte_input.c
-@@ -18,11 +18,29 @@
+@@ -18,14 +18,34 @@
  extern void sweet_hid_key(int key, int down);
  extern void sweet_hid_touch(int finger, int down, int x, int y);
  
@@ -47,7 +47,7 @@
  static unsigned j3_sda_pin;
  static unsigned j3_scl_pin;
  static uint16_t j3_f01_ctrl;
-@@ -164,6 +185,174 @@
+@@ -164,7 +185,178 @@
  {
  	return !!(j3_rd(j3_touch_gpio, J3_GPIO_DAT) & (1u << pin));
  }
@@ -226,7 +226,7 @@
  static bool
  j3_clock_high(void)
  {
-@@ -307,8 +496,22 @@
+@@ -307,9 +496,25 @@
  static bool
  j3_touch_select_pins(void)
  {
@@ -264,7 +264,7 @@
  	if (!j3_i2c_start()) {
  		return false;
  	}
-@@ -347,6 +555,11 @@
+@@ -347,8 +555,12 @@
  j3_rmi_read(uint16_t addr, uint8_t *data, unsigned count)
  {
  	if (!count || !j3_rmi_select_page((uint8_t)(addr >> 8))) {
@@ -277,7 +277,7 @@
  	if (!j3_i2c_start()) {
  		return false;
  	}
-@@ -371,6 +584,18 @@
+@@ -371,8 +584,19 @@
  j3_rmi_write(uint16_t addr, const uint8_t *data, unsigned count)
  {
  	if (!count || !j3_rmi_select_page((uint8_t)(addr >> 8))) {
@@ -297,7 +297,7 @@
  	if (!j3_i2c_start()) {
  		return false;
  	}
-@@ -578,6 +803,10 @@
+@@ -578,7 +803,11 @@
  			} else {
  				if ((setup_failures++ % 10u) == 0) {
  					printf("J3 INPUT: TD4100 not ready; retrying\n");
@@ -311,7 +311,7 @@
  			}
 --- a/iokit/Kernel/arm/SweetFramebuffer.cpp
 +++ b/iokit/Kernel/arm/SweetFramebuffer.cpp
-@@ -75,6 +75,38 @@
+@@ -75,5 +75,36 @@
  #define SWEET_FB_FORMAT_BGRA            0x42475241
  
 +#if defined(ARM64_BOARD_CONFIG_J3Y17LTE)
@@ -358,7 +358,7 @@
  	setProperty("external", false);
  	setProperty("DisplayPipePlaneBaseAlignment", 64ULL, 32);
  	registerService();
-@@ -548,6 +583,11 @@
+@@ -548,5 +583,9 @@
  			}
  			IOLockUnlock(fFB->fLock);
 +		#if defined(ARM64_BOARD_CONFIG_J3Y17LTE)
