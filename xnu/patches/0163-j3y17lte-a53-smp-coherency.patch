@@ -48,10 +48,10 @@
 +{
 +	uint64_t ectlr;
 +
-+	__asm__ volatile("mrs %0, S3_1_C15_C2_1" : "=r"(ectlr));
++	__asm__ volatile("mrs %0, s3_1_c15_c2_1" : "=r"(ectlr));
 +	if ((ectlr & (1ULL << 6)) == 0) {
 +		ectlr |= (1ULL << 6);
-+		__asm__ volatile("msr S3_1_C15_C2_1, %0" :: "r"(ectlr) : "memory");
++		__asm__ volatile("msr s3_1_c15_c2_1, %0" :: "r"(ectlr) : "memory");
 +	}
 +	__builtin_arm_dsb(DSB_SY);
 +	__builtin_arm_isb(ISB_SY);
@@ -64,29 +64,31 @@
  boolean_t sweet_cpu_signal_is_enabled(unsigned int cpu);
 --- a/osfmk/arm/arm_init.c
 +++ b/osfmk/arm/arm_init.c
-@@ -669,6 +669,12 @@
- 		__builtin_arm_dsb(DSB_SY);
- 	}
- #endif
-+#if defined(J3Y17LTE)
-+	/* Establish Cortex-A53 SMP coherency before touching shared scheduler
-+	 * state from this secondary. */
+@@ -663,9 +663,14 @@
+ #if defined(J3Y17LTE)
+ 	extern volatile uint32_t j3_secondary_stage[4];
+ 	extern void j3y17lte_gic_init_cpu(unsigned int cpu);
 +	extern void j3y17lte_enable_smp_coherency(void);
+ 	unsigned int j3_cpu = cpu_data_ptr->cpu_number;
+ 	boolean_t j3_first_start = j3_cpu != 0 &&
+ 	    (cpu_data_ptr->cpu_flags & StartedState) == 0;
+ #define J3_SECONDARY_STAGE(_stage) do { if (j3_cpu < 4) { j3_secondary_stage[j3_cpu] = (_stage); CleanPoC_DcacheRegion_Force((vm_offset_t)&j3_secondary_stage[j3_cpu], sizeof(j3_secondary_stage[j3_cpu])); __builtin_arm_dsb(DSB_SY); } } while (0)
+ 	J3_SECONDARY_STAGE(0x50);
++	/* Establish Cortex-A53 SMP coherency before this secondary touches
++	 * live shared scheduler/lock state. */
 +	j3y17lte_enable_smp_coherency();
-+#endif
- #if __ARM_PAN_AVAILABLE__
- 	__builtin_arm_wsr("pan", 1);
  #endif
 --- a/iokit/Kernel/arm/SweetCPU.cpp
 +++ b/iokit/Kernel/arm/SweetCPU.cpp
-@@ -23,6 +23,7 @@
+@@ -22,6 +22,7 @@
+ extern "C" boolean_t sweet_cpu_signal_is_enabled(unsigned int cpu);
  #if defined(J3Y17LTE)
  extern "C" void j3y17lte_send_ipi(unsigned int cpu);
  extern "C" void j3y17lte_gic_init_cpu(unsigned int cpu);
 +extern "C" void j3y17lte_enable_smp_coherency(void);
- #define CPU_PORT_NAME "J3Y17LTE"
- #else
- #define CPU_PORT_NAME "SWEET"
+ extern "C" {
+ volatile uint32_t j3_secondary_stage[4] = { 0, 0, 0, 0 };
+ }
 @@ -146,6 +147,12 @@
  void
  SweetCPU::startAll(void *arg __unused, wait_result_t result __unused)
