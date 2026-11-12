@@ -6,10 +6,7 @@
  	uint32_t        memsize;
 +#endif
  	uint64_t        xmaxmem;
-@@ -350,6 +350,24 @@
- 
- 	arm_slide_rebase_and_sign_image();
- 
+@@ -350,3 +352,21 @@
  	/* If kernel integrity is supported, use a constant copy of the boot args. */
  	const_boot_args = *args;
 +#if defined(J3Y17LTE)
@@ -54,9 +51,8 @@
  
  #if SCHED_HYGIENE_DEBUG
  	{
-@@ -632,8 +659,15 @@
- 		panic("%s: Unable to find 'dram-size' entry in the 'chosen' DT node", __FUNCTION__);
- 	}
+@@ -632,5 +659,12 @@
+ 	sweet_early_mark(33, "dram-size found");
  
 +#if defined(J3Y17LTE)
 +	/* is_dram_addr() must include the upper 1 GiB bank. This value is the
@@ -67,9 +63,7 @@
  	gDramBase = *dram_base;
  	gDramSize = *dram_size;
 +#endif
- 
- 	/*
- 	 * Initialize the stack protector for all future calls
+ 	sweet_early_mark(34, "DRAM globals installed");
 --- a/osfmk/arm64/arm_vm_init.c
 +++ b/osfmk/arm64/arm_vm_init.c
 @@ -2203,5 +2203,20 @@
