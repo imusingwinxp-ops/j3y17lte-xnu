@@ -1,8 +1,8 @@
 --- a/osfmk/arm64/proc_reg.h
 +++ b/osfmk/arm64/proc_reg.h
-@@ -980,11 +980,23 @@
- #define TCR_EL1_EXTRA (TCR_EL1_ASID | TCR_EL1_DTBI)
- #endif
+@@ -979,9 +979,21 @@
+ #define TCR_EL1_DTBI    0
+ #endif /* CONFIG_KERNEL_TBI */
  
 +/*
 + * Exynos7570 is a single coherent Cortex-A53 cluster.  Samsung's arm64
