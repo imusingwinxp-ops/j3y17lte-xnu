@@ -1,6 +1,6 @@
 --- a/osfmk/arm/arm_init.c
 +++ b/osfmk/arm/arm_init.c
-@@ -350,6 +350,25 @@
+@@ -350,6 +350,26 @@
  
  	arm_slide_rebase_and_sign_image();
  
@@ -27,7 +27,7 @@
  	/* If kernel integrity is supported, use a constant copy of the boot args. */
  	const_boot_args = *args;
  	BootArgs = args = &const_boot_args;
-@@ -468,12 +487,20 @@
+@@ -468,13 +487,22 @@
  
  	processor_bootstrap();
  
@@ -68,7 +68,7 @@
  	 * Initialize the stack protector for all future calls
 --- a/osfmk/arm64/arm_vm_init.c
 +++ b/osfmk/arm64/arm_vm_init.c
-@@ -2238,8 +2238,22 @@
+@@ -2238,7 +2238,22 @@
  	vm_page_kernelcache_count = (unsigned int) (atop_64(arm_vm_kernelcache_phys_end - arm_vm_kernelcache_phys_start));
  
 -	sane_size = mem_size - (avail_start - gPhysBase);
@@ -95,7 +95,7 @@
  	vm_kernel_stext = segTEXTB;
 --- a/osfmk/arm/pmap/pmap.c
 +++ b/osfmk/arm/pmap/pmap.c
-@@ -2566,6 +2566,11 @@
+@@ -2566,7 +2566,12 @@
   */
  
  static unsigned int avail_page_count = 0;
@@ -154,7 +154,7 @@
  		first_avail += PAGE_SIZE;
 --- a/osfmk/arm/pmap/pmap_data.h
 +++ b/osfmk/arm/pmap/pmap_data.h
-@@ -74,7 +74,16 @@
+@@ -74,7 +74,18 @@
  static inline bool
  pa_valid(pmap_paddr_t pa)
  {
