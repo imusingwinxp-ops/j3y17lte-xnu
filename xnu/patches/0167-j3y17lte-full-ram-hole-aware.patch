@@ -72,9 +72,7 @@
  	 * Initialize the stack protector for all future calls
 --- a/osfmk/arm64/arm_vm_init.c
 +++ b/osfmk/arm64/arm_vm_init.c
-@@ -2238,7 +2238,22 @@
- 	vm_page_kernelcache_count = (unsigned int) (atop_64(arm_vm_kernelcache_phys_end - arm_vm_kernelcache_phys_start));
- 
+@@ -2203,5 +2203,20 @@
 -	sane_size = mem_size - (avail_start - gPhysBase);
 -	max_mem = mem_size;
 +#if defined(J3Y17LTE)
