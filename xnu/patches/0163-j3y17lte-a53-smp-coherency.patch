@@ -1,0 +1,102 @@
+--- a/osfmk/arm64/proc_reg.h
++++ b/osfmk/arm64/proc_reg.h
+@@ -980,11 +980,23 @@
+ #define TCR_EL1_EXTRA (TCR_EL1_ASID | TCR_EL1_DTBI)
+ #endif
+ 
++/*
++ * Exynos7570 is a single coherent Cortex-A53 cluster.  Samsung's arm64
++ * kernel programs both translation regimes Inner Shareable for SMP.
++ * Keep Apple's default on Apple/donor targets, but use the A53 cluster's
++ * actual coherency domain on J3.
++ */
++#if defined(J3Y17LTE)
++#define TCR_EL1_SH0_VALUE TCR_SH0_INNER
++#define TCR_EL1_SH1_VALUE TCR_SH1_INNER
++#else
++#define TCR_EL1_SH0_VALUE TCR_SH0_OUTER
++#define TCR_EL1_SH1_VALUE TCR_SH1_OUTER
++#endif
++
+ #define TCR_EL1_BASE \
+-	(TCR_IPS_VALUE | TCR_SH0_OUTER | TCR_ORGN0_WRITEBACK |         \
++	(TCR_IPS_VALUE | TCR_EL1_SH0_VALUE | TCR_ORGN0_WRITEBACK |    \
+ 	 TCR_IRGN0_WRITEBACK | (T0SZ_BOOT << TCR_T0SZ_SHIFT) |          \
+-	 TCR_SH1_OUTER | TCR_ORGN1_WRITEBACK | \
++	 TCR_EL1_SH1_VALUE | TCR_ORGN1_WRITEBACK | \
+ 	 TCR_IRGN1_WRITEBACK | (TCR_TG1_GRANULE_SIZE) |                 \
+ 	 TCR_TBI0_TOPBYTE_IGNORED | (TCR_TBID0_ENABLE) | TCR_E0PD_VALUE | \
+ 	 TCR_EL1_DTBI)
+--- a/osfmk/arm64/cpu.c
++++ b/osfmk/arm64/cpu.c
+@@ -963,6 +963,34 @@
+ }
+ 
+ 
++#if defined(J3Y17LTE)
++/*
++ * Cortex-A53 CPUECTLR_EL1.SMPEN (bit 6) enables hardware management of
++ * data coherency with the other cores in the cluster.  The donor assumes
++ * firmware has already established this Apple/Qualcomm-style state; make
++ * the requirement explicit on the Exynos7570 before a secondary touches
++ * live XNU locks.
++ *
++ * Read first so firmware that already enabled SMPEN is left untouched.
++ */
++void
++j3y17lte_enable_smp_coherency(void)
++{
++	uint64_t ectlr;
++
++	__asm__ volatile("mrs %0, S3_1_C15_C2_1" : "=r"(ectlr));
++	if ((ectlr & (1ULL << 6)) == 0) {
++		ectlr |= (1ULL << 6);
++		__asm__ volatile("msr S3_1_C15_C2_1, %0" :: "r"(ectlr) : "memory");
++	}
++	__builtin_arm_dsb(DSB_SY);
++	__builtin_arm_isb(ISB_SY);
++}
++#endif
++
++
+ #if defined(SWEET)
+ /* Bring-up observer: the self-SGI clears SIGPdisabled after IRQs unmask. */
+ boolean_t sweet_cpu_signal_is_enabled(unsigned int cpu);
+--- a/osfmk/arm/arm_init.c
++++ b/osfmk/arm/arm_init.c
+@@ -669,6 +669,11 @@
+ 		__builtin_arm_dsb(DSB_SY);
+ 	}
+ #endif
++#if defined(J3Y17LTE)
++	/* Establish Cortex-A53 SMP coherency before touching shared scheduler
++	 * state from this secondary. */
++	extern void j3y17lte_enable_smp_coherency(void);
++	j3y17lte_enable_smp_coherency();
++#endif
+ #if __ARM_PAN_AVAILABLE__
+ 	__builtin_arm_wsr("pan", 1);
+ #endif
+--- a/iokit/Kernel/arm/SweetCPU.cpp
++++ b/iokit/Kernel/arm/SweetCPU.cpp
+@@ -23,6 +23,7 @@
+ #if defined(J3Y17LTE)
+ extern "C" void j3y17lte_send_ipi(unsigned int cpu);
+ extern "C" void j3y17lte_gic_init_cpu(unsigned int cpu);
++extern "C" void j3y17lte_enable_smp_coherency(void);
+ #define CPU_PORT_NAME "J3Y17LTE"
+ #else
+ #define CPU_PORT_NAME "SWEET"
+@@ -146,6 +147,12 @@
+ void
+ SweetCPU::startAll(void *arg __unused, wait_result_t result __unused)
+ {
++#if defined(J3Y17LTE)
++	/* startAll still runs on CPU0 here.  Put the boot A53 into the same
++	 * coherent SMP state before releasing any secondary via PSCI. */
++	j3y17lte_enable_smp_coherency();
++#endif
++
+ 	const ml_topology_info_t *topology = ml_get_topology_info();
+ 	uint32_t requested = 1;
+ 	PE_parse_boot_argn("cpus", &requested, sizeof(requested));
