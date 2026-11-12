@@ -33,7 +33,7 @@
  #else
 --- a/osfmk/arm/cpu_common.c
 +++ b/osfmk/arm/cpu_common.c
-@@ -686,16 +686,28 @@
+@@ -686,23 +686,39 @@
  
  	cpu_data_ptr = getCpuDatap();
  #if defined(J3Y17LTE)
