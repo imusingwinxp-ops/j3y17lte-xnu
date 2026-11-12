@@ -1,6 +1,6 @@
 --- a/osfmk/arm64/proc_reg.h
 +++ b/osfmk/arm64/proc_reg.h
-@@ -979,9 +979,21 @@
+@@ -979,10 +979,24 @@
  #define TCR_EL1_DTBI    0
  #endif /* CONFIG_KERNEL_TBI */
  
@@ -29,7 +29,7 @@
  	 TCR_EL1_DTBI)
 --- a/osfmk/arm64/cpu.c
 +++ b/osfmk/arm64/cpu.c
-@@ -963,6 +963,34 @@
+@@ -963,6 +963,32 @@
  }
  
  
@@ -64,7 +64,7 @@
  boolean_t sweet_cpu_signal_is_enabled(unsigned int cpu);
 --- a/osfmk/arm/arm_init.c
 +++ b/osfmk/arm/arm_init.c
-@@ -669,6 +669,11 @@
+@@ -669,6 +669,12 @@
  		__builtin_arm_dsb(DSB_SY);
  	}
  #endif
