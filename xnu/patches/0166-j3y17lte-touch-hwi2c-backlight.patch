@@ -1,0 +1,370 @@
+--- a/bsd/dev/j3y17lte_input.c
++++ b/bsd/dev/j3y17lte_input.c
+@@ -18,11 +18,29 @@
+ extern void sweet_hid_key(int key, int down);
+ extern void sweet_hid_touch(int finger, int down, int x, int y);
+ 
+ #define J3_KEYS_GPIO_PA         0x139f0000u
+ #define J3_TOUCH_GPIO_PA        0x139d0000u
++#define J3_TOUCH_I2C_PA         0x13840000u
++#define J3_CMU_PERI_PA          0x101f0000u
++#define J3_CMU_BUS0             0x0810u
++#define J3_CMU_I2C_TSP_GATE     (1u << 23)
+ #define J3_GPA0_DAT             0x044u
+ #define J3_GPA2_DAT             0x084u
+ #define J3_GPIO_CON             0x000u
+ #define J3_GPIO_DAT             0x004u
+ #define J3_GPIO_PUD             0x008u
+ 
++#define J3_IICCON               0x00u
++#define J3_IICSTAT              0x04u
++#define J3_IICADD               0x08u
++#define J3_IICDS                0x0cu
++#define J3_IICLC                0x10u
++#define J3_IICCON_ACKEN         (1u << 7)
++#define J3_IICCON_TXDIV512      (1u << 6)
++#define J3_IICCON_IRQEN         (1u << 5)
++#define J3_IICCON_IRQPEND       (1u << 4)
++#define J3_IICSTAT_MASTER_RX    (2u << 6)
++#define J3_IICSTAT_MASTER_TX    (3u << 6)
++#define J3_IICSTAT_START        (1u << 5)
++#define J3_IICSTAT_TXRXEN       (1u << 4)
++#define J3_IICSTAT_LASTBIT      (1u << 0)
++#define J3_IICLC_FILTER_ON      (1u << 2)
++
+ #define J3_RMI_ADDR             0x4bu
+ #define J3_RMI_PAGES            4u
+ #define J3_RMI_PDT_START        0xe9u
+@@ -40,8 +58,11 @@
+ 
+ static vm_offset_t j3_keys_gpio;
+ static vm_offset_t j3_touch_gpio;
++static vm_offset_t j3_touch_i2c;
++static vm_offset_t j3_cmu_peri;
+ static bool j3_input_started;
+ static bool j3_touch_bus_ready;
++static bool j3_touch_hw_i2c;
+ static unsigned j3_sda_pin;
+ static unsigned j3_scl_pin;
+ static uint16_t j3_f01_ctrl;
+@@ -164,6 +185,174 @@
+ {
+ 	return !!(j3_rd(j3_touch_gpio, J3_GPIO_DAT) & (1u << pin));
+ }
+ 
++static bool
++j3_hw_wait_pending(void)
++{
++	for (unsigned i = 0; i < 4000; i++) {
++		if (j3_rd(j3_touch_i2c, J3_IICCON) & J3_IICCON_IRQPEND) {
++			return true;
++		}
++		delay(2);
++	}
++	return false;
++}
++
++static void
++j3_hw_release(void)
++{
++	uint32_t con = j3_rd(j3_touch_i2c, J3_IICCON);
++	j3_wr(j3_touch_i2c, J3_IICCON, con & ~J3_IICCON_IRQPEND);
++}
++
++static void
++j3_hw_stop(void)
++{
++	uint32_t stat = j3_rd(j3_touch_i2c, J3_IICSTAT);
++	j3_wr(j3_touch_i2c, J3_IICSTAT, stat & ~J3_IICSTAT_START);
++	j3_hw_release();
++	for (unsigned i = 0; i < 5000; i++) {
++		if (!(j3_rd(j3_touch_i2c, J3_IICSTAT) & J3_IICSTAT_START)) {
++			break;
++		}
++		delay(1);
++	}
++	stat = j3_rd(j3_touch_i2c, J3_IICSTAT);
++	j3_wr(j3_touch_i2c, J3_IICSTAT, stat & ~J3_IICSTAT_TXRXEN);
++	uint32_t con = j3_rd(j3_touch_i2c, J3_IICCON);
++	j3_wr(j3_touch_i2c, J3_IICCON, con | J3_IICCON_ACKEN);
++}
++
++static bool
++j3_hw_start(bool read, bool repeated)
++{
++	uint32_t stat = J3_IICSTAT_TXRXEN |
++	    (read ? J3_IICSTAT_MASTER_RX : J3_IICSTAT_MASTER_TX);
++	uint32_t con = j3_rd(j3_touch_i2c, J3_IICCON) |
++	    J3_IICCON_ACKEN | J3_IICCON_IRQEN;
++	uint8_t address = (uint8_t)((J3_RMI_ADDR << 1) | (read ? 1u : 0u));
++
++	j3_wr(j3_touch_i2c, J3_IICSTAT, stat);
++	j3_wr(j3_touch_i2c, J3_IICDS, address);
++	j3_wr(j3_touch_i2c, J3_IICCON, con);
++	j3_wr(j3_touch_i2c, J3_IICSTAT, stat | J3_IICSTAT_START);
++	if (repeated) {
++		j3_hw_release();
++	}
++	if (!j3_hw_wait_pending()) {
++		return false;
++	}
++	return !(j3_rd(j3_touch_i2c, J3_IICSTAT) & J3_IICSTAT_LASTBIT);
++}
++
++static bool
++j3_hw_write_byte(uint8_t value)
++{
++	j3_wr(j3_touch_i2c, J3_IICDS, value);
++	delay(1);
++	j3_hw_release();
++	if (!j3_hw_wait_pending()) {
++		return false;
++	}
++	return !(j3_rd(j3_touch_i2c, J3_IICSTAT) & J3_IICSTAT_LASTBIT);
++}
++
++static bool
++j3_hw_write(const uint8_t *data, unsigned count)
++{
++	if (!j3_hw_start(false, false)) {
++		j3_hw_stop();
++		return false;
++	}
++	for (unsigned i = 0; i < count; i++) {
++		if (!j3_hw_write_byte(data[i])) {
++			j3_hw_stop();
++			return false;
++		}
++	}
++	j3_hw_stop();
++	return true;
++}
++
++static bool
++j3_hw_write_read(const uint8_t *prefix, unsigned prefix_count,
++	uint8_t *data, unsigned count)
++{
++	if (!count || !j3_hw_start(false, false)) {
++		j3_hw_stop();
++		return false;
++	}
++	for (unsigned i = 0; i < prefix_count; i++) {
++		if (!j3_hw_write_byte(prefix[i])) {
++			j3_hw_stop();
++			return false;
++		}
++	}
++	if (!j3_hw_start(true, true)) {
++		j3_hw_stop();
++		return false;
++	}
++	for (unsigned i = 0; i < count; i++) {
++		uint32_t con = j3_rd(j3_touch_i2c, J3_IICCON);
++		if (i + 1 == count) {
++			con &= ~J3_IICCON_ACKEN;
++		} else {
++			con |= J3_IICCON_ACKEN;
++		}
++		j3_wr(j3_touch_i2c, J3_IICCON, con);
++		j3_hw_release();
++		if (!j3_hw_wait_pending()) {
++			j3_hw_stop();
++			return false;
++		}
++		data[i] = (uint8_t)j3_rd(j3_touch_i2c, J3_IICDS);
++	}
++	j3_hw_stop();
++	return true;
++}
++
++static bool
++j3_hw_probe(void)
++{
++	bool ok = j3_hw_start(false, false);
++	j3_hw_stop();
++	return ok;
++}
++
++static bool
++j3_hw_init(void)
++{
++	if (!j3_touch_i2c) {
++		j3_touch_i2c = ml_io_map(J3_TOUCH_I2C_PA, 0x1000);
++	}
++	if (!j3_cmu_peri) {
++		j3_cmu_peri = ml_io_map(J3_CMU_PERI_PA, 0x1000);
++	}
++	if (!j3_touch_i2c || !j3_cmu_peri) {
++		return false;
++	}
++
++	/* Samsung S5E7570: I2C_TSP is CLK_ENABLE_CLK_PERI_BUS0 bit 23. */
++	uint32_t gate = j3_rd(j3_cmu_peri, J3_CMU_BUS0);
++	j3_wr(j3_cmu_peri, J3_CMU_BUS0, gate | J3_CMU_I2C_TSP_GATE);
++	if (!(j3_rd(j3_cmu_peri, J3_CMU_BUS0) & J3_CMU_I2C_TSP_GATE)) {
++		return false;
++	}
++
++	/* Samsung pinctrl: GPC3.1/GPC3.0 function 2 is I2C_TSP. */
++	uint32_t pud = j3_rd(j3_touch_gpio, J3_GPIO_PUD);
++	j3_wr(j3_touch_gpio, J3_GPIO_PUD, pud & ~0xffu);
++	j3_gpio_mode(0, 2u);
++	j3_gpio_mode(1, 2u);
++
++	/* Conservative controller clock: /512 with scale 4.  The TD4100 is
++	 * specified for the vendor's 400 kHz bus and is happy below that. */
++	j3_wr(j3_touch_i2c, J3_IICSTAT, 0);
++	j3_wr(j3_touch_i2c, J3_IICADD, 0);
++	j3_wr(j3_touch_i2c, J3_IICLC, J3_IICLC_FILTER_ON);
++	j3_wr(j3_touch_i2c, J3_IICCON,
++	    J3_IICCON_ACKEN | J3_IICCON_TXDIV512 |
++	    J3_IICCON_IRQEN | 3u);
++	delay(20);
++	return true;
++}
++
+ static bool
+ j3_clock_high(void)
+ {
+@@ -307,8 +496,22 @@
+ static bool
+ j3_touch_select_pins(void)
+ {
+ 	uint32_t pud = j3_rd(j3_touch_gpio, J3_GPIO_PUD);
+ 	j3_wr(j3_touch_gpio, J3_GPIO_PUD, pud & ~0xfu);
+ 
++	/* Prefer the real Samsung I2C_TSP controller. Keep the old bit-bang
++	 * bridge as a recovery fallback if the controller/clock is unavailable. */
++	if (j3_hw_init() && j3_hw_probe()) {
++		j3_touch_hw_i2c = true;
++		printf("J3 INPUT: TD4100 HW-I2C ACK at 0x4b\n");
++		return true;
++	}
++	static bool warned;
++	if (!warned) {
++		printf("J3 INPUT: HW-I2C unavailable; trying GPIO fallback\n");
++		warned = true;
++	}
++	j3_touch_hw_i2c = false;
++	j3_gpio_mode(0, 0u);
++	j3_gpio_mode(1, 0u);
++
+ 	static const unsigned candidates[2][2] = {
+ 		{0, 1},
+ 		{1, 0},
+@@ -333,6 +536,11 @@
+ static bool
+ j3_rmi_select_page(uint8_t page)
+ {
++	if (j3_touch_hw_i2c) {
++		uint8_t tx[2] = { 0xffu, page };
++		return j3_hw_write(tx, sizeof(tx));
++	}
++
+ 	if (!j3_i2c_start()) {
+ 		return false;
+ 	}
+@@ -347,6 +555,11 @@
+ j3_rmi_read(uint16_t addr, uint8_t *data, unsigned count)
+ {
+ 	if (!count || !j3_rmi_select_page((uint8_t)(addr >> 8))) {
+ 		return false;
+ 	}
++	if (j3_touch_hw_i2c) {
++		uint8_t reg = (uint8_t)addr;
++		return j3_hw_write_read(&reg, 1, data, count);
++	}
+ 	if (!j3_i2c_start()) {
+ 		return false;
+ 	}
+@@ -371,6 +584,18 @@
+ j3_rmi_write(uint16_t addr, const uint8_t *data, unsigned count)
+ {
+ 	if (!count || !j3_rmi_select_page((uint8_t)(addr >> 8))) {
+ 		return false;
+ 	}
++	if (j3_touch_hw_i2c) {
++		uint8_t tx[64];
++		if (count + 1 > sizeof(tx)) {
++			return false;
++		}
++		tx[0] = (uint8_t)addr;
++		for (unsigned i = 0; i < count; i++) {
++			tx[i + 1] = data[i];
++		}
++		return j3_hw_write(tx, count + 1);
++	}
+ 	if (!j3_i2c_start()) {
+ 		return false;
+ 	}
+@@ -578,6 +803,10 @@
+ 			} else {
+ 				if ((setup_failures++ % 10u) == 0) {
+ 					printf("J3 INPUT: TD4100 not ready; retrying\n");
+ 				}
++				if ((setup_failures % 3u) == 0) {
++					j3_touch_bus_ready = false;
++					j3_touch_hw_i2c = false;
++				}
+ 				j3_sleep_ms(&j3_touch_sleep_chan, 1000);
+ 				continue;
+ 			}
+--- a/iokit/Kernel/arm/SweetFramebuffer.cpp
++++ b/iokit/Kernel/arm/SweetFramebuffer.cpp
+@@ -75,6 +75,38 @@
+ #define SWEET_FB_FORMAT_BGRA            0x42475241
+ 
++#if defined(ARM64_BOARD_CONFIG_J3Y17LTE)
++extern "C" vm_offset_t ml_io_map(vm_offset_t, vm_size_t);
++#define J3_ALIVE_GPIO_PA                 0x139f0000u
++#define J3_GPA1_CON                      0x060u
++#define J3_GPA1_DAT                      0x064u
++#define J3_BLIC_PIN                      2u
++
++static vm_offset_t j3_alive_gpio;
++
++static void
++j3_backlight_set(bool on)
++{
++	if (!j3_alive_gpio) {
++		j3_alive_gpio = ml_io_map(J3_ALIVE_GPIO_PA, 0x1000);
++	}
++	if (!j3_alive_gpio) {
++		return;
++	}
++	volatile uint32_t *con = (volatile uint32_t *)(j3_alive_gpio + J3_GPA1_CON);
++	volatile uint32_t *dat = (volatile uint32_t *)(j3_alive_gpio + J3_GPA1_DAT);
++	uint32_t cv = *con;
++	cv &= ~(0xfu << (J3_BLIC_PIN * 4u));
++	cv |= 1u << (J3_BLIC_PIN * 4u);
++	*con = cv;
++	__asm__ volatile("dsb oshst" ::: "memory");
++	uint32_t dv = *dat;
++	*dat = on ? (dv | (1u << J3_BLIC_PIN)) : (dv & ~(1u << J3_BLIC_PIN));
++	__asm__ volatile("dsb osh" ::: "memory");
++}
++#endif
++
+ class IOMobileFramebuffer : public IOService {
+ 	OSDeclareDefaultStructors(IOMobileFramebuffer);
+ };
+@@ -214,6 +246,9 @@
+ 	fVsync->setTimeoutUS(SWEET_FB_VSYNC_US);
+ 
+ 	setProperty(kIOUserClientClassKey, "IOMobileFramebufferUserClient");
++#if defined(ARM64_BOARD_CONFIG_J3Y17LTE)
++	j3_backlight_set(true);
++#endif
+ 	setProperty("external", false);
+ 	setProperty("DisplayPipePlaneBaseAlignment", 64ULL, 32);
+ 	registerService();
+@@ -548,6 +583,11 @@
+ 			}
+ 			IOLockUnlock(fFB->fLock);
++		#if defined(ARM64_BOARD_CONFIG_J3Y17LTE)
++			/* J3 is LCD, not donor AMOLED: physically cut/restore BLIC. */
++			j3_backlight_set(!off);
++		#endif
+ 			IOLog("SWEET FB: display %s\n", off ? "off" : "on");
+ 		}
+ 		break;
