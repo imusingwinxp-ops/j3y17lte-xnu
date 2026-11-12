@@ -1,0 +1,84 @@
+--- a/osfmk/arm/arm_init.c
++++ b/osfmk/arm/arm_init.c
+@@ -665,6 +665,8 @@
+ 	extern volatile uint32_t j3_secondary_stage[4];
+ 	extern void j3y17lte_gic_init_cpu(unsigned int cpu);
+ 	unsigned int j3_cpu = cpu_data_ptr->cpu_number;
++	boolean_t j3_first_start = j3_cpu != 0 &&
++	    (cpu_data_ptr->cpu_flags & StartedState) == 0;
+ #define J3_SECONDARY_STAGE(_stage) do { if (j3_cpu < 4) { j3_secondary_stage[j3_cpu] = (_stage); CleanPoC_DcacheRegion_Force((vm_offset_t)&j3_secondary_stage[j3_cpu], sizeof(j3_secondary_stage[j3_cpu])); __builtin_arm_dsb(DSB_SY); } } while (0)
+ 	J3_SECONDARY_STAGE(0x50);
+ #endif
+@@ -734,10 +736,31 @@
+ 	 * drivers use mach_absolute_time() to implement rate control
+ 	 */
+ 	cpu_timebase_init(FALSE);
++
++#if defined(J3Y17LTE)
++	J3_SECONDARY_STAGE(0x58);
++	/*
++	 * J3 starts secondaries late, from IOKit. Set up the banked GICv2 CPU
++	 * interface now, but keep DAIF masked until XNU's mandatory FIQ/timer
++	 * setup below is complete.
++	 */
++	if (j3_cpu != 0) {
++		j3y17lte_gic_init_cpu(j3_cpu);
++	}
++	J3_SECONDARY_STAGE(0x59);
++#endif
+ 
+ #if KPERF
+ 	/* kptimer_curcpu_up() must be called after cpu_timebase_init */
++#if defined(J3Y17LTE)
++	/* First-start J3 CPUs have never missed a kperf online IPI. x86 XNU
++	 * likewise skips kptimer_curcpu_up() on a CPU's first startup. */
++	if (!j3_first_start) {
++		kptimer_curcpu_up();
++	}
++#else
+ 	kptimer_curcpu_up();
++#endif
+ #endif /* KPERF */
+ 
+ 	if (cpu_data_ptr == &BootCpuData) {
+@@ -749,19 +761,19 @@
+ 		PE_init_platform(TRUE, NULL);
+ 		commpage_update_timebase();
+ 	}
+-	PE_init_cpu();
+ #if defined(J3Y17LTE)
+-	J3_SECONDARY_STAGE(0x53);
+ 	/*
+-	 * J3 starts secondary CPUs after early boot.  Bring up the banked GICv2
+-	 * CPU interface before the scheduler handoff so IRQs can be unmasked
+-	 * safely there.  The old placement in SweetCPU::initCPU() is too late:
+-	 * load_context() can allocate before cpu_machine_init() reaches IOCPU.
++	 * PE_init_cpu is Apple/platform debug CPU bring-up. On J3's first late
++	 * secondary start it can enter allocation paths before the processor is
++	 * scheduler-online, which is exactly the post-EARLY_BOOT context zalloc
++	 * rejects. Defer that optional first-start work; resume keeps stock order.
+ 	 */
+-	if (j3_cpu != 0) {
+-		j3y17lte_gic_init_cpu(j3_cpu);
++	if (!j3_first_start) {
++		PE_init_cpu();
+ 	}
+-	J3_SECONDARY_STAGE(0x54);
++	J3_SECONDARY_STAGE(0x5a);
++#else
++	PE_init_cpu();
+ #endif
+ 
+ 	fiq_context_init(TRUE);
+--- a/iokit/Kernel/arm/SweetCPU.cpp
++++ b/iokit/Kernel/arm/SweetCPU.cpp
+@@ -204,6 +204,9 @@
+ 				case 0x55: panic("J3ST55");
+ 				case 0x56: panic("J3ST56");
+ 				case 0x57: panic("J3ST57");
++				case 0x58: panic("J3ST58");
++				case 0x59: panic("J3ST59");
++				case 0x5a: panic("J3ST5A");
+ 				case 0x60: panic("J3ST60");
+ 				default:   panic("J3STXX");
+ 				}
