@@ -64,7 +64,7 @@
  boolean_t sweet_cpu_signal_is_enabled(unsigned int cpu);
 --- a/osfmk/arm/arm_init.c
 +++ b/osfmk/arm/arm_init.c
-@@ -663,9 +663,14 @@
+@@ -663,9 +663,13 @@
  #if defined(J3Y17LTE)
  	extern volatile uint32_t j3_secondary_stage[4];
  	extern void j3y17lte_gic_init_cpu(unsigned int cpu);
@@ -80,7 +80,7 @@
  #endif
 --- a/iokit/Kernel/arm/SweetCPU.cpp
 +++ b/iokit/Kernel/arm/SweetCPU.cpp
-@@ -22,6 +22,7 @@
+@@ -22,7 +22,8 @@
  extern "C" boolean_t sweet_cpu_signal_is_enabled(unsigned int cpu);
  #if defined(J3Y17LTE)
  extern "C" void j3y17lte_send_ipi(unsigned int cpu);
