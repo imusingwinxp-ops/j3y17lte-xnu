@@ -1,6 +1,6 @@
 --- a/osfmk/arm/arm_init.c
 +++ b/osfmk/arm/arm_init.c
-@@ -350,8 +350,28 @@
+@@ -350,6 +350,24 @@
  
  	arm_slide_rebase_and_sign_image();
  
