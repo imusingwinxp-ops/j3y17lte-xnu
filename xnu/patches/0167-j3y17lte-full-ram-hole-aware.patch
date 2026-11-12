@@ -1,5 +1,17 @@
 --- a/osfmk/arm/arm_init.c
 +++ b/osfmk/arm/arm_init.c
+@@ -340,8 +340,12 @@
+ arm_init(
+ 	boot_args       *args)
+ {
+ 	unsigned int    maxmem;
++#if !defined(J3Y17LTE)
+ 	uint32_t        memsize;
++#endif
+ 	uint64_t        xmaxmem;
+ 	thread_t        thread;
+ 	DTEntry chosen = NULL;
+ 	unsigned int dt_entry_size = 0;
 @@ -350,6 +350,24 @@
  
  	arm_slide_rebase_and_sign_image();
