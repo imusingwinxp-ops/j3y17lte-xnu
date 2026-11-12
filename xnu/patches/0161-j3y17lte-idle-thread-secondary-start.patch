@@ -1,0 +1,109 @@
+--- a/osfmk/kern/processor.c
++++ b/osfmk/kern/processor.c
+@@ -879,8 +879,18 @@
+ 	 *	has never been started.  Create a dedicated
+ 	 *	start up thread.
+ 	 */
+ 	if (processor->active_thread == THREAD_NULL &&
+-	    processor->startup_thread == THREAD_NULL) {
++	    processor->startup_thread == THREAD_NULL
++#if defined(J3Y17LTE)
++	    /*
++	     * J3 mirrors the newer XNU secondary-CPU lifecycle: leave the
++	     * dedicated startup thread absent so slave_main() boots on the
++	     * already-reserved idle thread and installs processor_start_thread
++	     * as that thread's continuation.
++	     */
++	    && processor == master_processor
++#endif
++	    ) {
+ 		result = kernel_thread_create(processor_start_thread, NULL, MAXPRI_KERNEL, &thread);
+ 		if (result != KERN_SUCCESS) {
+ 			s = splsched();
+--- a/osfmk/arm64/cpu.c
++++ b/osfmk/arm64/cpu.c
+@@ -934,5 +934,14 @@
+ 		CleanPoC_DcacheRegion_Force((vm_offset_t)&first_thread->machine,
+ 		    sizeof(first_thread->machine));
++		/*
++		 * The J3 secondary enters the scheduler handoff using CPU0-created
++		 * thread/processor objects. Publish the complete objects to PoC,
++		 * not only the machine sub-structure, before PSCI releases the core.
++		 */
++		CleanPoC_DcacheRegion_Force((vm_offset_t)first_thread,
++		    sizeof(*first_thread));
++		CleanPoC_DcacheRegion_Force((vm_offset_t)processor,
++		    sizeof(*processor));
+ #endif
+ 		CleanPoC_DcacheRegion_Force((vm_offset_t)&ResetHandlerData, sizeof(ResetHandlerData));
+ 		CleanPoC_DcacheRegion_Force((vm_offset_t)BootArgs, sizeof(*BootArgs));
+--- a/osfmk/arm/arm_init.c
++++ b/osfmk/arm/arm_init.c
+@@ -665,8 +665,6 @@
+ 	extern volatile uint32_t j3_secondary_stage[4];
+ 	extern void j3y17lte_gic_init_cpu(unsigned int cpu);
+ 	unsigned int j3_cpu = cpu_data_ptr->cpu_number;
+-	boolean_t j3_first_start = j3_cpu != 0 &&
+-	    (cpu_data_ptr->cpu_flags & StartedState) == 0;
+ #define J3_SECONDARY_STAGE(_stage) do { if (j3_cpu < 4) { j3_secondary_stage[j3_cpu] = (_stage); CleanPoC_DcacheRegion_Force((vm_offset_t)&j3_secondary_stage[j3_cpu], sizeof(j3_secondary_stage[j3_cpu])); __builtin_arm_dsb(DSB_SY); } } while (0)
+ 	J3_SECONDARY_STAGE(0x50);
+ #endif
+@@ -752,15 +750,7 @@
+ 
+ #if KPERF
+ 	/* kptimer_curcpu_up() must be called after cpu_timebase_init */
+-#if defined(J3Y17LTE)
+-	/* First-start J3 CPUs have never missed a kperf online IPI. x86 XNU
+-	 * likewise skips kptimer_curcpu_up() on a CPU's first startup. */
+-	if (!j3_first_start) {
+-		kptimer_curcpu_up();
+-	}
+-#else
+ 	kptimer_curcpu_up();
+-#endif
+ #endif /* KPERF */
+ 
+ 	if (cpu_data_ptr == &BootCpuData) {
+@@ -771,19 +762,10 @@
+ 		PE_init_platform(TRUE, NULL);
+ 		commpage_update_timebase();
+ 	}
++	PE_init_cpu();
+ #if defined(J3Y17LTE)
+-	/*
+-	 * PE_init_cpu is Apple/platform debug CPU bring-up. On J3's first late
+-	 * secondary start it can enter allocation paths before the processor is
+-	 * scheduler-online, which is exactly the post-EARLY_BOOT context zalloc
+-	 * rejects. Defer that optional first-start work; resume keeps stock order.
+-	 */
+-	if (!j3_first_start) {
+-		PE_init_cpu();
+-	}
++	/* Stock service ordering is safe once J3 uses the idle-thread start path. */
+ 	J3_SECONDARY_STAGE(0x5a);
+-#else
+-	PE_init_cpu();
+ #endif
+ 
+ 	fiq_context_init(TRUE);
+@@ -820,17 +802,12 @@
+ 
+ 
+ #if defined(J3Y17LTE)
+ 	J3_SECONDARY_STAGE(0x56);
+ 	/*
+-	 * fiq_context_init() requires IRQs masked, so unmask only after all
+-	 * per-CPU interrupt/timer setup above is complete.  Stock early SMP can
+-	 * allocate with IRQs masked because startup_phase is still EARLY_BOOT;
+-	 * J3's IOKit-triggered late SMP cannot.  Enter load_context with IRQs
+-	 * serviceable instead of weakening zalloc's safety assertion.
++	 * Keep the stock ARM scheduler contract: slave_main/load_context enters
++	 * at splsched with IRQs masked. The idle-thread first-start path avoids
++	 * the non-idle startup-thread bookkeeping that previously died here.
+ 	 */
+-	if (j3_cpu != 0) {
+-		(void)ml_set_interrupts_enabled(TRUE);
+-	}
+ 	J3_SECONDARY_STAGE(0x57);
+ #undef J3_SECONDARY_STAGE
+ #endif
