@@ -25,7 +25,7 @@
  	 * Waiting here with DAIF.I set would deadlock every secondary. */
  	signalCPU(this);
  	setCPUState(kIOCPUStateRunning);
--	kprintf("SWEET CPU: cpu=%u entered initCPU mpidr=0x%llx EL%llu IRQs=%u\n",
+-	kprintf(CPU_PORT_NAME " CPU: cpu=%u entered initCPU mpidr=0x%llx EL%llu IRQs=%u\n",
 -	    getCPUNumber(), __builtin_arm_rsr64("MPIDR_EL1") & 0xffffULL,
 -	    __builtin_arm_rsr64("CurrentEL") >> 2, ml_get_interrupts_enabled());
  	__atomic_store_n(&initialized, 1, __ATOMIC_RELEASE);
