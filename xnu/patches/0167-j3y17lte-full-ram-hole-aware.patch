@@ -1,11 +1,5 @@
 --- a/osfmk/arm/arm_init.c
 +++ b/osfmk/arm/arm_init.c
-@@ -342,3 +342,5 @@
- 	unsigned int    maxmem;
-+#if !defined(J3Y17LTE)
- 	uint32_t        memsize;
-+#endif
- 	uint64_t        xmaxmem;
 @@ -350,3 +352,21 @@
  	/* If kernel integrity is supported, use a constant copy of the boot args. */
  	const_boot_args = *args;
@@ -28,23 +22,20 @@
 +	const_boot_args.memSizeActual = 0x7e800000ULL;
 +#endif
  	BootArgs = args = &const_boot_args;
-@@ -468,7 +487,16 @@
- 	if (PE_parse_boot_argn("maxmem", &maxmem, sizeof(maxmem))) {
- 		xmaxmem = (uint64_t) maxmem * (1024 * 1024);
+@@ -603,7 +621,13 @@
+ 	sweet_early_mark(7, "entering arm_vm_init");
+ #if defined(J3Y17LTE)
+ 	J3_EARLY_MARK(0x67146460UL, 0xffffffffU); /* stage 22 */
+ #undef J3_EARLY_MARK
+ #endif
 +#if defined(J3Y17LTE)
-+	/*
-+	 * Do not let a stale donor/ADT hw.memsize default silently cap the J3
-+	 * back to 1 GiB. An explicit maxmem= remains available for recovery.
-+	 */
-+	} else {
++	/* Ignore donor hw.memsize unless maxmem= was explicitly requested. */
++	if (!PE_parse_boot_argn("maxmem", &maxmem, sizeof(maxmem))) {
 +		xmaxmem = 0;
-+#else
- 	} else if (PE_get_default("hw.memsize", &memsize, sizeof(memsize))) {
- 		xmaxmem = (uint64_t) memsize;
- 	} else {
- 		xmaxmem = 0;
- 	}
++	}
 +#endif
+ 	arm_vm_init(xmaxmem, args);
+ 	sweet_early_mark(15, "arm_vm_init returned");
 @@ -632,5 +659,12 @@
  	sweet_early_mark(33, "dram-size found");
  
