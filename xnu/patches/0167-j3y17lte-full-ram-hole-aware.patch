@@ -36,6 +36,36 @@
 +#endif
  	arm_vm_init(xmaxmem, args);
  	sweet_early_mark(15, "arm_vm_init returned");
+@@ -397,20 +415,29 @@
+ 	{
+ 		/*
+ 		 * Select the advertised kernel page size.
+ 		 */
++#if defined(J3Y17LTE)
++		/*
++		 * Exynos7570/J3 is a 4 KiB-page port.  Advertising the full 2 GiB
++		 * physical aperture must not make stock XNU switch the software VM
++		 * page size to 16 KiB merely because memSize is now >1 GiB.
++		 */
++		PAGE_SHIFT_CONST = ARM_PGSHIFT;
++#else
+ 		if (args->memSize > 1ULL * 1024 * 1024 * 1024) {
+ 			/*
+ 			 * arm64 device with > 1GB of RAM:
+ 			 * kernel uses 16KB pages.
+ 			 */
+ 			PAGE_SHIFT_CONST = PAGE_MAX_SHIFT;
+ 		} else {
+ 			/*
+ 			 * arm64 device with <= 1GB of RAM:
+ 			 * kernel uses hardware page size
+ 			 * (4KB for H6/H7, 16KB for H8+).
+ 			 */
+ 			PAGE_SHIFT_CONST = ARM_PGSHIFT;
+ 		}
++#endif
+ 
+ 		/* 32-bit apps always see 16KB page size */
 @@ -632,5 +659,12 @@
  	sweet_early_mark(33, "dram-size found");
  
