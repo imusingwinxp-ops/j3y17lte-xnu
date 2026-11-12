@@ -1,0 +1,99 @@
+--- a/pexpert/arm/pe_fiq.c
++++ b/pexpert/arm/pe_fiq.c
+@@ -239,6 +239,67 @@
+ 	*(volatile uint32_t *)(base + offset) = value;
+ }
+ 
++/*
++ * Exynos7570 PMU setup required by Samsung before normal SMP operation.
++ *
++ * The CPU-side Cortex-A53 SMPEN bit is necessary but not sufficient on
++ * this SoC: Samsung also programs the PMU to observe each core's SMP state,
++ * configures cluster L2 WFI handling, and enables the CPUCL0 power-up
++ * scheduler.  These registers survive some warm-reset paths, so relying on
++ * bootloader leftovers makes secondary bring-up nondeterministic.
++ *
++ * Keep this intentionally minimal: only program bits common to Samsung's
++ * legacy S5E7570 syspwr code and its newer PMUCAL tables.
++ */
++#define J3_PMU_PA                  0x11c80000ULL
++#define J3_PMU_SIZE                0x10000
++#define J3_PMU_UP_SCHEDULER        0x0120
++#define J3_PMU_CPU0_OPTION         0x2008
++#define J3_PMU_CPU_OPTION_STRIDE   0x0080
++#define J3_PMU_L2_OPTION           0x2608
++
++#define J3_PMU_USE_SMPEN           (1U << 28)
++#define J3_PMU_L2_AUTO_FLUSH       (1U << 17)
++#define J3_PMU_L2_STANDBYWFI       (1U << 16)
++#define J3_PMU_ENABLE_CPUCL0_CPU   (1U << 0)
++
++static vm_offset_t j3_pmu_base;
++
++static uint32_t
++j3_pmu_read32(unsigned int offset)
++{
++	return *(volatile uint32_t *)(j3_pmu_base + offset);
++}
++
++static void
++j3_pmu_write32(unsigned int offset, uint32_t value)
++{
++	*(volatile uint32_t *)(j3_pmu_base + offset) = value;
++	__builtin_arm_dsb(DSB_SY);
++}
++
++void
++j3y17lte_prepare_smp_pmu(void)
++{
++	if (!j3_pmu_base) {
++		j3_pmu_base = ml_io_map(J3_PMU_PA, J3_PMU_SIZE);
++	}
++	if (!j3_pmu_base) {
++		panic("j3y17lte: cannot map Exynos7570 PMU");
++	}
++
++	for (unsigned int cpu = 0; cpu < 4; cpu++) {
++		unsigned int off = J3_PMU_CPU0_OPTION +
++		    cpu * J3_PMU_CPU_OPTION_STRIDE;
++		j3_pmu_write32(off, j3_pmu_read32(off) | J3_PMU_USE_SMPEN);
++		if ((j3_pmu_read32(off) & J3_PMU_USE_SMPEN) == 0) {
++			panic("j3y17lte: PMU USE_SMPEN did not latch for cpu%u", cpu);
++		}
++	}
++
++	uint32_t l2 = j3_pmu_read32(J3_PMU_L2_OPTION);
++	l2 &= ~J3_PMU_L2_AUTO_FLUSH;
++	l2 |= J3_PMU_L2_STANDBYWFI;
++	j3_pmu_write32(J3_PMU_L2_OPTION, l2);
++
++	uint32_t up = j3_pmu_read32(J3_PMU_UP_SCHEDULER);
++	up |= J3_PMU_ENABLE_CPUCL0_CPU;
++	j3_pmu_write32(J3_PMU_UP_SCHEDULER, up);
++
++	__builtin_arm_dsb(DSB_SY);
++	__builtin_arm_isb(ISB_SY);
++}
++
+ uint32_t
+ j3y17lte_irq_ack(void)
+ {
+--- a/iokit/Kernel/arm/SweetCPU.cpp
++++ b/iokit/Kernel/arm/SweetCPU.cpp
+@@ -24,6 +24,7 @@
+ extern "C" void j3y17lte_send_ipi(unsigned int cpu);
+ extern "C" void j3y17lte_gic_init_cpu(unsigned int cpu);
+ extern "C" void j3y17lte_enable_smp_coherency(void);
++extern "C" void j3y17lte_prepare_smp_pmu(void);
+ extern "C" {
+ volatile uint32_t j3_secondary_stage[4] = { 0, 0, 0, 0 };
+ }
+@@ -149,6 +150,7 @@
+ {
+ #if defined(J3Y17LTE)
+ 	/* startAll still runs on CPU0 here.  Put the boot A53 into the same
+ 	 * coherent SMP state before releasing any secondary via PSCI. */
++	j3y17lte_prepare_smp_pmu();
+ 	j3y17lte_enable_smp_coherency();
+ #endif
+ 
