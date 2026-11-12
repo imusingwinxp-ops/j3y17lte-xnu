@@ -1,6 +1,6 @@
 --- a/osfmk/arm/arm_init.c
 +++ b/osfmk/arm/arm_init.c
-@@ -365,8 +365,10 @@
+@@ -365,11 +365,12 @@
 -	 * BootArgs has only one base/size span, so advertise the full 2 GiB
 -	 * physical aperture and record the actual usable 2024 MiB separately.
 -	 * The J3 pmap changes below reject/skip the 24 MiB hole. Do this on
@@ -20,10 +20,8 @@
  #endif
 --- a/osfmk/arm64/arm_vm_init.c
 +++ b/osfmk/arm64/arm_vm_init.c
-@@ -1825,6 +1825,14 @@
- #define ARM64_PHYSMAP_ALIGNMENT_PADDING (PTOV_TABLE_SIZE * ARM_TT_TWIG_SIZE)
- #endif
- 
+@@ -370,3 +370,10 @@
+ #define PTOV_TABLE_SIZE 8
 +#if defined(J3Y17LTE)
 +#define J3_RAM_BANK0_END    ((pmap_paddr_t)0x7e800000ULL)
 +#define J3_RAM_BANK1_START  ((pmap_paddr_t)0x80000000ULL)
@@ -31,30 +29,16 @@
 +#define J3_RAM_SPAN_SIZE    ((uint64_t)0x80000000ULL)
 +#define J3_RAM_USABLE_SIZE  ((uint64_t)0x7e800000ULL)
 +#endif
-+
- #if defined(SWEET)
- /*
-  * The reserved low-globals/kernel region is excluded from VM allocation.
-@@ -1952,8 +1960,15 @@
- 	static_memory_end = phystokv(args->topOfKernelData);
- 	physmap_end = physmap_base + real_phys_size + ARM64_PHYSMAP_ALIGNMENT_PADDING;
- #else
-+#if defined(J3Y17LTE)
-+	/* The final J3 physmap packs bank0 + bank1 and deliberately omits the hole. */
-+	static_memory_end = physmap_base + J3_RAM_USABLE_SIZE + ARM64_PHYSMAP_ALIGNMENT_PADDING;
-+	physmap_end = physmap_base + J3_RAM_USABLE_SIZE + ARM64_PHYSMAP_ALIGNMENT_PADDING;
-+#else
- 	static_memory_end = physmap_base + mem_size + ARM64_PHYSMAP_ALIGNMENT_PADDING; // worst possible case for block alignment
- 	physmap_end = physmap_base + real_phys_size + ARM64_PHYSMAP_ALIGNMENT_PADDING;
-+#endif
- #endif // ARM_LARGE_MEMORY
- #endif
- 
-@@ -1684,8 +1699,22 @@
+ SECURITY_READ_ONLY_LATE(static ptov_table_entry)        ptov_table[PTOV_TABLE_SIZE];
+ SECURITY_READ_ONLY_LATE(static boolean_t)               kva_active = FALSE;
+@@ -1684,8 +1691,24 @@
  	arm_vm_page_granular_RWNX(end_kern, phystokv(args->topOfKernelData) - end_kern,
  	    ARM64_GRANULE_ALLOW_BLOCK | ARM64_GRANULE_ALLOW_HINT); /* Device Tree (if not locked down), RAM Disk (if present), bootArgs */
  
 +#if defined(J3Y17LTE)
++	if (args->topOfKernelData >= J3_RAM_BANK0_END) {
++		panic("J3 RAM: topOfKernelData outside bank0 (0x%llx)", args->topOfKernelData);
++	}
 +	/* Finish bank0, then create an independent aperture segment for bank1.
 +	 * No mapping is created for 0x7e800000..0x80000000. */
 +	arm_vm_physmap_slide(temp_ptov_table,
@@ -71,6 +55,21 @@
 +#endif
  
  	assert((temp_ptov_table[ptov_index - 1].va + temp_ptov_table[ptov_index - 1].len) <= physmap_end);
+ 
+@@ -1952,8 +1975,14 @@
+ 	static_memory_end = phystokv(args->topOfKernelData);
+ 	physmap_end = physmap_base + real_phys_size + ARM64_PHYSMAP_ALIGNMENT_PADDING;
+ #else
++#if defined(J3Y17LTE)
++	/* The final J3 physmap packs bank0 + bank1 and deliberately omits the hole. */
++	static_memory_end = physmap_base + J3_RAM_USABLE_SIZE + ARM64_PHYSMAP_ALIGNMENT_PADDING;
++	physmap_end = physmap_base + J3_RAM_USABLE_SIZE + ARM64_PHYSMAP_ALIGNMENT_PADDING;
++#else
+ 	static_memory_end = physmap_base + mem_size + ARM64_PHYSMAP_ALIGNMENT_PADDING; // worst possible case for block alignment
+ 	physmap_end = physmap_base + real_phys_size + ARM64_PHYSMAP_ALIGNMENT_PADDING;
++#endif
+ #endif // ARM_LARGE_MEMORY
+ #endif
  
 @@ -2232,6 +2261,10 @@
  	 */
