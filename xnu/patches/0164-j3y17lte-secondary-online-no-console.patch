@@ -1,26 +1,6 @@
 --- a/iokit/Kernel/arm/SweetCPU.cpp
 +++ b/iokit/Kernel/arm/SweetCPU.cpp
-@@ -217,9 +217,6 @@
- {
- #if defined(J3Y17LTE)
- 	uint32_t was_initialized = __atomic_load_n(&initialized, __ATOMIC_ACQUIRE);
--	kprintf("J3Y17LTE CPU: initCPU obj=%u cur=%d boot=%u initialized=%u mpidr=0x%llx\\n",
--	    getCPUNumber(), cpu_number(), boot ? 1U : 0U, was_initialized,
--	    __builtin_arm_rsr64("MPIDR_EL1") & 0xffffULL);
- 	/*
- 	 * XNU says boot=true on the first startup of a CPU. During J3 SMP
- 	 * bring-up we have observed CPU1 reaching this driver with boot=false.
-@@ -248,9 +245,6 @@
- 	 * Waiting here with DAIF.I set would deadlock every secondary. */
- 	signalCPU(this);
- 	setCPUState(kIOCPUStateRunning);
--	kprintf("SWEET CPU: cpu=%u entered initCPU mpidr=0x%llx EL%llu IRQs=%u\n",
--	    getCPUNumber(), __builtin_arm_rsr64("MPIDR_EL1") & 0xffffULL,
--	    __builtin_arm_rsr64("CurrentEL") >> 2, ml_get_interrupts_enabled());
- 	__atomic_store_n(&initialized, 1, __ATOMIC_RELEASE);
- }
- 
-@@ -207,6 +201,10 @@
+@@ -207,6 +207,10 @@
  				case 0x59: panic("J3ST59");
  				case 0x5a: panic("J3ST5A");
  				case 0x60: panic("J3ST60");
@@ -31,6 +11,26 @@
  				default:   panic("J3STXX");
  				}
  #else
+@@ -217,9 +221,6 @@
+ {
+ #if defined(J3Y17LTE)
+ 	uint32_t was_initialized = __atomic_load_n(&initialized, __ATOMIC_ACQUIRE);
+-	kprintf("J3Y17LTE CPU: initCPU obj=%u cur=%d boot=%u initialized=%u mpidr=0x%llx\\n",
+-	    getCPUNumber(), cpu_number(), boot ? 1U : 0U, was_initialized,
+-	    __builtin_arm_rsr64("MPIDR_EL1") & 0xffffULL);
+ 	/*
+ 	 * XNU says boot=true on the first startup of a CPU. During J3 SMP
+ 	 * bring-up we have observed CPU1 reaching this driver with boot=false.
+@@ -248,9 +249,6 @@
+ 	 * Waiting here with DAIF.I set would deadlock every secondary. */
+ 	signalCPU(this);
+ 	setCPUState(kIOCPUStateRunning);
+-	kprintf("SWEET CPU: cpu=%u entered initCPU mpidr=0x%llx EL%llu IRQs=%u\n",
+-	    getCPUNumber(), __builtin_arm_rsr64("MPIDR_EL1") & 0xffffULL,
+-	    __builtin_arm_rsr64("CurrentEL") >> 2, ml_get_interrupts_enabled());
+ 	__atomic_store_n(&initialized, 1, __ATOMIC_RELEASE);
+ }
+ 
 --- a/osfmk/arm/cpu_common.c
 +++ b/osfmk/arm/cpu_common.c
 @@ -686,23 +686,39 @@
