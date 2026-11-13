@@ -224,7 +224,7 @@
  	max_mem = mem_size;
 -#endif
  	vm_kernel_slid_base = segLOWESTTEXT;
-@@ -2434,9 +2380,6 @@
+@@ -2434,8 +2380,5 @@
  	sweet_early_mark(12, "calling pmap_bootstrap");
  	pmap_bootstrap(dynamic_memory_begin);
  	sweet_early_mark(13, "pmap_bootstrap done");
@@ -274,7 +274,7 @@
  
  	need_ram_ranges_init = false;
  }
-@@ -2666,14 +2648,7 @@
+@@ -2666,13 +2648,6 @@
  	}
  
  
@@ -290,7 +290,7 @@
  		first_avail += PAGE_SIZE;
 --- a/osfmk/arm/pmap/pmap_data.c
 +++ b/osfmk/arm/pmap/pmap_data.c
-@@ -44,6 +44,10 @@
+@@ -44,3 +44,7 @@
  
  #include <arm/pmap/pmap_internal.h>
  
@@ -312,13 +312,13 @@
 +
  	/**
  	 * Allocate enough initial PTDs to map twice the available physical memory.
-@@ -754,7 +761,7 @@
+@@ -754,4 +761,4 @@
  	 * needed to cover all of kernel-managed physical memory.
  	 */
  	const uint32_t num_leaf_page_tables =
 -	    (uint32_t)(mem_size / ((PAGE_SIZE / sizeof(pt_entry_t)) * ARM_PGBYTES));
 +	    (uint32_t)(j3_pmap_metadata_span / ((PAGE_SIZE / sizeof(pt_entry_t)) * ARM_PGBYTES));
-@@ -769,7 +776,7 @@
+@@ -769,5 +776,5 @@
  
  	/* Number of VM pages that span all of kernel-managed memory. */
 -	const unsigned int npages = (unsigned int)atop(mem_size);
@@ -338,7 +338,7 @@
  /**
   * Return whether the given address represents a kernel-managed physical page.
   *
-@@ -78,17 +82,16 @@
+@@ -78,18 +82,17 @@
  static inline bool
  pa_valid(pmap_paddr_t pa)
  {
@@ -378,7 +378,7 @@
  #define isphysmem(a)            (((vm_address_t)(a) - gPhysBase) < gPhysSize)
 +#endif
  #define physmap_enclosed(a)     isphysmem(a)
-@@ -219,7 +226,13 @@
+@@ -219,6 +226,12 @@
   */
  #include <stdint.h>
  extern uint64_t                 gDramBase, gDramSize;
@@ -393,7 +393,7 @@
  #endif /* MACH_KERNEL_PRIVATE */
 --- a/osfmk/vm/vm_init.c
 +++ b/osfmk/vm/vm_init.c
-@@ -72,6 +72,59 @@
+@@ -72,6 +72,62 @@
  TUNABLE(bool, iokit_iomd_setownership_enabled,
      "iokit_iomd_setownership_enabled", true);
  
