@@ -1,6 +1,6 @@
 --- a/osfmk/arm/arm_init.c
 +++ b/osfmk/arm/arm_init.c
-@@ -375,7 +375,7 @@
+@@ -375,8 +375,8 @@
  	if (const_boot_args.physBase != 0x40000000ULL) {
  		panic("J3 RAM: unexpected physBase 0x%llx", const_boot_args.physBase);
  	}
@@ -20,7 +20,7 @@
  #endif
  SECURITY_READ_ONLY_LATE(static ptov_table_entry)        ptov_table[PTOV_TABLE_SIZE];
  SECURITY_READ_ONLY_LATE(static boolean_t)               kva_active = FALSE;
-@@ -1879,11 +1881,12 @@
+@@ -1879,11 +1881,11 @@
  #if defined(ARM_LARGE_MEMORY)
  #if defined(J3Y17LTE)
  	/*
@@ -45,7 +45,7 @@
  #else
  	uint64_t physmap_slide = early_random() & ARM64_PHYSMAP_SLIDE_MASK & ~((uint64_t)PAGE_MASK);
  #endif
-@@ -2271,25 +2274,8 @@
+@@ -2271,20 +2274,6 @@
  #endif
  #if defined(J3Y17LTE)
 -	/*
