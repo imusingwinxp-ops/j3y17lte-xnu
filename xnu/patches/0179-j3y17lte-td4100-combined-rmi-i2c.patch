@@ -9,7 +9,7 @@
  #define J3_RMI_PDT_START        0xe9u
  #define J3_RMI_PDT_END          0xd0u
  #define J3_RMI_PDT_SIZE         6u
-@@ -250,45 +250,65 @@
+@@ -250,36 +250,28 @@
  }
  
  static bool
@@ -55,7 +55,7 @@
  	if (!j3_hw_start(true, true)) {
  		j3_hw_stop();
  		return false;
-@@ -310,6 +330,22 @@
+@@ -310,6 +302,22 @@
  	return true;
  }
  
@@ -78,7 +78,7 @@
  static bool
  j3_hw_probe(void)
  {
-@@ -537,76 +573,76 @@
+@@ -537,46 +545,35 @@
  	return false;
  }
  
@@ -140,7 +140,7 @@
  	for (unsigned i = 0; i < count; i++) {
  		data[i] = j3_i2c_read_byte(i + 1 < count);
  	}
-@@ -616,25 +652,31 @@
+@@ -616,28 +613,27 @@
  static bool
  j3_rmi_write(uint16_t addr, const uint8_t *data, unsigned count)
  {
@@ -179,7 +179,7 @@
  	j3_i2c_stop();
  	return ok;
  }
-@@ -658,10 +700,24 @@
+@@ -658,8 +654,20 @@
  			uint8_t fd[6];
  			uint16_t addr = (uint16_t)((page << 8) | (unsigned)reg);
  			if (!j3_rmi_read(addr, fd, sizeof(fd))) {
