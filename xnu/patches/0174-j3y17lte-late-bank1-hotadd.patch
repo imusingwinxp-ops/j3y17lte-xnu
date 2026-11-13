@@ -39,10 +39,7 @@
  	arm_vm_init(xmaxmem, args);
  	sweet_early_mark(15, "arm_vm_init returned");
  
-@@ -693,16 +669,9 @@
- 	}
- 	sweet_early_mark(33, "dram-size found");
- 
+@@ -696,9 +672,2 @@
 -#if defined(J3Y17LTE)
 -	/* is_dram_addr() must include the upper 1 GiB bank. This value is the
 -	 * enclosing physical DRAM span; pa_valid() still rejects the 24 MiB hole. */
@@ -52,9 +49,6 @@
  	gDramBase = *dram_base;
  	gDramSize = *dram_size;
 -#endif
- 	sweet_early_mark(34, "DRAM globals installed");
- 
- 	/*
 --- a/osfmk/arm64/arm_vm_init.c
 +++ b/osfmk/arm64/arm_vm_init.c
 @@ -377,11 +377,6 @@
@@ -286,7 +280,7 @@
  	max_mem = mem_size;
 -#endif
  	vm_kernel_slid_base = segLOWESTTEXT;
-@@ -2434,9 +2380,6 @@
+@@ -2434,8 +2380,5 @@
  	sweet_early_mark(12, "calling pmap_bootstrap");
  	pmap_bootstrap(dynamic_memory_begin);
  	sweet_early_mark(13, "pmap_bootstrap done");
@@ -336,7 +330,7 @@
  
  	need_ram_ranges_init = false;
  }
-@@ -2666,14 +2648,7 @@
+@@ -2666,13 +2648,6 @@
  	}
  
  
@@ -380,7 +374,7 @@
  	const uint32_t num_leaf_page_tables =
 -	    (uint32_t)(mem_size / ((PAGE_SIZE / sizeof(pt_entry_t)) * ARM_PGBYTES));
 +	    (uint32_t)(j3_pmap_metadata_span / ((PAGE_SIZE / sizeof(pt_entry_t)) * ARM_PGBYTES));
-@@ -769,6 +776,6 @@
+@@ -769,5 +776,5 @@
  
  	/* Number of VM pages that span all of kernel-managed memory. */
 -	const unsigned int npages = (unsigned int)atop(mem_size);
@@ -400,7 +394,7 @@
  /**
   * Return whether the given address represents a kernel-managed physical page.
   *
-@@ -78,19 +82,22 @@
+@@ -78,18 +82,21 @@
  static inline bool
  pa_valid(pmap_paddr_t pa)
  {
@@ -445,7 +439,7 @@
  #define isphysmem(a)            (((vm_address_t)(a) - gPhysBase) < gPhysSize)
 +#endif
  #define physmap_enclosed(a)     isphysmem(a)
-@@ -219,7 +226,13 @@
+@@ -219,6 +226,12 @@
   */
  #include <stdint.h>
  extern uint64_t                 gDramBase, gDramSize;
