@@ -31,6 +31,32 @@ jobs:
         run: |
           set -euo pipefail
           cd preflight-xnu
+          export MACHINE_CONFIG=J3Y17LTE
+          export MACOS_VERSION=13.5
+
+          PREFLIGHT_SDK="$PWD/.j3-preflight-sdk"
+          PREFLIGHT_BIN="$PWD/.j3-preflight-bin"
+          mkdir -p "$PREFLIGHT_SDK/usr/include" "$PREFLIGHT_BIN"
+          cat > "$PREFLIGHT_SDK/usr/include/TargetConditionals.h" <<'EOF'
+          #ifndef __TARGETCONDITIONALS__
+          #define __TARGETCONDITIONALS__
+          #define TARGET_OS_OSX 1
+          #define TARGET_OS_MAC 1
+          #define TARGET_OS_IPHONE 0
+          #endif
+          EOF
+          cat > "$PREFLIGHT_BIN/xcrun" <<EOF
+          #!/bin/sh
+          if [ "\$1" = "--sdk" ] && [ "\$2" = "macosx" ] && [ "\$3" = "--show-sdk-path" ]; then
+            printf '%s\\n' "$PREFLIGHT_SDK"
+            exit 0
+          fi
+          echo "preflight xcrun stub: unsupported invocation: \$*" >&2
+          exit 1
+          EOF
+          chmod +x "$PREFLIGHT_BIN/xcrun"
+          export PATH="$PREFLIGHT_BIN:$PATH"
+
           for script in ../xnu/patches/*.sh; do
             echo "RUN: $(basename "$script")"
             bash "$script"
