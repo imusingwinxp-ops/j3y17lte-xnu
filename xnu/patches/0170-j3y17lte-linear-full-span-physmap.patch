@@ -75,7 +75,7 @@
 +#endif
  #if defined(J3Y17LTE)
  	/* From this point phystokv() can reach bank1 through ptov_table.
-@@ -2299,4 +2308,7 @@
+@@ -2299,5 +2308,8 @@
  	cpu_tte = (tt_entry_t*)(phystokv(cpu_ttep));
  	invalid_tte = (tt_entry_t*)(phystokv(invalid_ttep));
  	sweet_early_mark(11, "physmap table pointers rebound");
