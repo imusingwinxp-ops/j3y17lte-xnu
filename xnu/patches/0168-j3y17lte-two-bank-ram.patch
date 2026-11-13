@@ -82,11 +82,10 @@
  	arm_vm_physmap_init(args);
  	set_mmu_ttb_alternate(cpu_ttep & TTBR_BADDR_MASK);
  
-@@ -2250,7 +2283,15 @@
+@@ -2250,6 +2283,14 @@
  	flush_mmu_tlb();
  	sweet_early_mark(10, "TTBR0 off; TLB flushed");
  	kva_active = TRUE;
- 
 +#if defined(J3Y17LTE)
 +	/* From this point phystokv() can reach bank1 through ptov_table.
 +	 * Expand the pmap index space only now, after bootstrap linear mappings
