@@ -336,7 +336,7 @@
  		first_avail += PAGE_SIZE;
 --- a/osfmk/arm/pmap/pmap_data.c
 +++ b/osfmk/arm/pmap/pmap_data.c
-@@ -609,5 +609,13 @@
+@@ -609,28 +609,36 @@
  	/* The maximum amount of padding should be (l2_cline_bytes - 1). */
  	assert((ptd_info_offset - pt_desc_bytes) < l2_cline_bytes);
  
@@ -350,13 +350,25 @@
 +
  	/**
  	 * Allocate enough initial PTDs to map twice the available physical memory.
-@@ -616,4 +624,4 @@
+ 	 *
+ 	 * To do this, start by calculating the number of leaf page tables that are
  	 * needed to cover all of kernel-managed physical memory.
  	 */
  	const uint32_t num_leaf_page_tables =
 -	    (uint32_t)(mem_size / ((PAGE_SIZE / sizeof(pt_entry_t)) * ARM_PGBYTES));
 +	    (uint32_t)(j3_pmap_metadata_span / ((PAGE_SIZE / sizeof(pt_entry_t)) * ARM_PGBYTES));
-@@ -632,5 +640,5 @@
+ 
+ 	/**
+ 	 * There should be one PTD per page table (times 2 since we want twice the
+ 	 * number of required PTDs), plus round the number of PTDs up to the next
+ 	 * `ptd_per_page` value so there's no wasted space.
+ 	 */
+ 	const uint32_t ptd_root_table_n_ptds =
+ 	    (ptd_per_page * ((num_leaf_page_tables * 2) / ptd_per_page)) + ptd_per_page;
+ 
+ 	/* Lastly, calculate the number of VM pages and bytes these PTDs take up. */
+ 	const uint32_t num_ptd_pages = ptd_root_table_n_ptds / ptd_per_page;
+ 	vm_size_t ptd_root_table_size = num_ptd_pages * PAGE_SIZE;
  
  	/* Number of VM pages that span all of kernel-managed memory. */
 -	const unsigned int npages = (unsigned int)atop(mem_size);
