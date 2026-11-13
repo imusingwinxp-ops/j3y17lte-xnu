@@ -1,0 +1,436 @@
+--- a/osfmk/arm/arm_init.c
++++ b/osfmk/arm/arm_init.c
+@@ -356,24 +356,6 @@
+ 
+ 	/* If kernel integrity is supported, use a constant copy of the boot args. */
+ 	const_boot_args = *args;
+-#if defined(J3Y17LTE)
+-	/*
+-	 * Exynos7570 J3Y17LTE DRAM topology:
+-	 *   0x40000000..0x7e800000  1000 MiB RAM
+-	 *   0x7e800000..0x80000000    24 MiB hole
+-	 *   0x80000000..0xc0000000  1024 MiB RAM
+-	 *
+-	 * BootArgs can only describe one contiguous range. Keep bootstrap/XNU's
+-	 * early linear assumptions confined to the real 1000 MiB lower bank.
+-	 * The upper 1 GiB bank is added later as a separate physical-aperture
+-	 * segment once the final kernel page tables exist. memSizeActual still
+-	 * records the full 2024 MiB of real DRAM.
+-	 */
+-	if (const_boot_args.physBase != 0x40000000ULL) {
+-		panic("J3 RAM: unexpected physBase 0x%llx", const_boot_args.physBase);
+-	}
+-	const_boot_args.memSize = 0x61800000ULL;
+-	const_boot_args.memSizeActual = 0x60000000ULL;
+-#endif
+ 	BootArgs = args = &const_boot_args;
+ #if defined(J3Y17LTE)
+ 	J3_EARLY_MARK(0x670b9a60UL, 0xffffff80U); /* stage 12 */
+@@ -633,12 +615,6 @@
+ 	J3_EARLY_MARK(0x67146460UL, 0xffffffffU); /* stage 22 */
+ #undef J3_EARLY_MARK
+ #endif
+-#if defined(J3Y17LTE)
+-	/* Ignore donor hw.memsize unless maxmem= was explicitly requested. */
+-	if (!PE_parse_boot_argn("maxmem", &maxmem, sizeof(maxmem))) {
+-		xmaxmem = 0;
+-	}
+-#endif
+ 	arm_vm_init(xmaxmem, args);
+ 	sweet_early_mark(15, "arm_vm_init returned");
+ 
+@@ -693,15 +669,8 @@
+ 	}
+ 	sweet_early_mark(33, "dram-size found");
+ 
+-#if defined(J3Y17LTE)
+-	/* is_dram_addr() must include the upper 1 GiB bank. This value is the
+-	 * enclosing physical DRAM span; pa_valid() still rejects the 24 MiB hole. */
+-	gDramBase = 0x40000000ULL;
+-	gDramSize = 0x61800000ULL;
+-#else
+ 	gDramBase = *dram_base;
+ 	gDramSize = *dram_size;
+-#endif
+ 	sweet_early_mark(34, "DRAM globals installed");
+ 
+ 	/*
+--- a/osfmk/arm64/arm_vm_init.c
++++ b/osfmk/arm64/arm_vm_init.c
+@@ -377,12 +377,6 @@
+ #define J3_RAM_BANK1_END    ((pmap_paddr_t)0xc0000000ULL)
+ #define J3_RAM_SPAN_SIZE    ((uint64_t)0x80000000ULL)
+ #define J3_RAM_USABLE_SIZE  ((uint64_t)0x7e800000ULL)
+-#define J3_RAM_TARGET_END         ((pmap_paddr_t)0xa1800000ULL)
+-#define J3_RAM_TARGET_SPAN_SIZE   ((uint64_t)0x61800000ULL)
+-#define J3_RAM_TARGET_USABLE_SIZE ((uint64_t)0x60000000ULL)
+-#define J3_PHYSMAP_SLIDE_RANGE    (1ULL << 28)
+-#define J3_PHYSMAP_SLIDE_MASK     (J3_PHYSMAP_SLIDE_RANGE - 1)
+ #endif
+ SECURITY_READ_ONLY_LATE(static ptov_table_entry)        ptov_table[PTOV_TABLE_SIZE];
+ SECURITY_READ_ONLY_LATE(static boolean_t)               kva_active = FALSE;
+@@ -390,6 +384,25 @@
+ 
++/*
++ * J3XNU071: bank1 is discovered after normal VM bootstrap.  Keep it out of
++ * the fragile early arm_vm_init() aperture and append a PTOV entry only after
++ * the late KVA mapping has been installed.
++ */
++#if defined(J3Y17LTE)
++void
++j3y17lte_register_hotadd_ptov(vm_map_address_t va, pmap_paddr_t pa, vm_size_t len)
++{
++	for (size_t i = 0; i < PTOV_TABLE_SIZE; i++) {
++		if (ptov_table[i].len == 0) {
++			ptov_table[i].pa = pa;
++			ptov_table[i].va = va;
++			ptov_table[i].len = len;
++			__builtin_arm_dmb(DMB_ISHST);
++			return;
++		}
++	}
++	panic("J3 HOTADD: PTOV table full");
++}
++#endif
++
+ vm_map_address_t
+ phystokv(pmap_paddr_t pa)
+ {
+@@ -1890,23 +1903,8 @@
+ 
+ #if defined(ARM_LARGE_MEMORY)
+-#if defined(J3Y17LTE)
+-	/*
+-	 * J3XNU070: 1536 MiB usable RAM occupies a 1560 MiB enclosing PA span.
+-	 * A 256 MiB slide keeps the entire aperture plus alignment padding inside
+-	 * the same two 1-GiB L1 slots used by the known-good 1000 MiB boot.
+-	 */
+-	_Static_assert((J3_RAM_TARGET_SPAN_SIZE + J3_PHYSMAP_SLIDE_RANGE +
+-	    ARM64_PHYSMAP_ALIGNMENT_PADDING) < (2ULL * ARM_TT_L1_SIZE),
+-	    "J3 1536MiB target must fit the known-good two-L1 physmap geometry");
+-	unsigned long physmap_l1_entries = ((real_phys_size + J3_PHYSMAP_SLIDE_RANGE + ARM64_PHYSMAP_ALIGNMENT_PADDING) >> ARM_TT_L1_SHIFT) + 1;
+-#else
+ 	unsigned long physmap_l1_entries = ((real_phys_size + ARM64_PHYSMAP_SLIDE_RANGE + ARM64_PHYSMAP_ALIGNMENT_PADDING) >> ARM_TT_L1_SHIFT) + 1;
+-#endif
+ 	physmap_base = VM_MIN_KERNEL_ADDRESS - (physmap_l1_entries << ARM_TT_L1_SHIFT);
+ #else
+ 	physmap_base = phystokv(args->topOfKernelData);
+ #endif
+ 
+ 	// Slide the physical aperture to a random page-aligned location within the slide range
+-#if defined(J3Y17LTE)
+-	uint64_t physmap_slide = early_random() & J3_PHYSMAP_SLIDE_MASK & ~((uint64_t)PAGE_MASK);
+-#else
+ 	uint64_t physmap_slide = early_random() & ARM64_PHYSMAP_SLIDE_MASK & ~((uint64_t)PAGE_MASK);
+-#endif
+ 	assert(physmap_slide < ARM64_PHYSMAP_SLIDE_RANGE);
+@@ -1921,15 +1919,7 @@
+ #if defined(ARM_LARGE_MEMORY)
+ 	/* For large memory systems with no PPL such as virtual machines */
+ 	static_memory_end = phystokv(args->topOfKernelData);
+-#if defined(J3Y17LTE)
+-	/*
+-	 * Keep the early aperture at lower-bank size. J3XNU069 grows this bound
+-	 * immediately before the final physmap is constructed.
+-	 */
+ 	physmap_end = physmap_base + real_phys_size + ARM64_PHYSMAP_ALIGNMENT_PADDING;
+-#else
+-	physmap_end = physmap_base + real_phys_size + ARM64_PHYSMAP_ALIGNMENT_PADDING;
+-#endif
+ #else
+ #if defined(J3Y17LTE)
+ 	/* Preserve PA offsets across the J3 aperture; the allocator still skips the hole. */
+@@ -1710,25 +1700,8 @@
+ 	arm_vm_page_granular_RWNX(end_kern, phystokv(args->topOfKernelData) - end_kern,
+ 	    ARM64_GRANULE_ALLOW_BLOCK | ARM64_GRANULE_ALLOW_HINT); /* Device Tree (if not locked down), RAM Disk (if present), bootArgs */
+ 
+-#if defined(J3Y17LTE)
+-	if (args->topOfKernelData >= J3_RAM_BANK0_END) {
+-		panic("J3 RAM: topOfKernelData outside bank0 (0x%llx)", args->topOfKernelData);
+-	}
+-	/*
+-	 * Keep one linear final aperture from bank0 through bank1, including PTEs
+-	 * for the 24 MiB physical hole. Nothing may allocate/use those hole pages:
+-	 * pmap_next_page() skips them and pa_valid() rejects them. Keeping the VA
+-	 * offset preserves XNU's PA<->physmap arithmetic across the upper bank.
+-	 */
+-	sweet_early_mark(364, "J3XNU067 linear full-span physmap entered");
+-	arm_vm_physmap_slide(temp_ptov_table,
+-	    (args->topOfKernelData - gPhysBase + gVirtBase),
+-	    J3_RAM_TARGET_END - args->topOfKernelData,
+-	    AP_RWNA, ARM64_GRANULE_ALLOW_BLOCK | ARM64_GRANULE_ALLOW_HINT);
+-	sweet_early_mark(365, "J3XNU067 linear full-span physmap completed");
+-#else
+ 	arm_vm_physmap_slide(temp_ptov_table, (args->topOfKernelData - gPhysBase + gVirtBase),
+ 	    real_avail_end - args->topOfKernelData, AP_RWNA, ARM64_GRANULE_ALLOW_BLOCK | ARM64_GRANULE_ALLOW_HINT); // rest of physmem
+-#endif
+ 
+ 	assert((temp_ptov_table[ptov_index - 1].va + temp_ptov_table[ptov_index - 1].len) <= physmap_end);
+@@ -2276,10 +2249,6 @@
+ 	 */
+ 	sweet_early_map_final();
+ #endif
+-#if defined(J3Y17LTE)
+-	sweet_early_mark(374, "J3XNU070 stock-style 1536MiB physmap begin");
+-	sweet_early_mark(363, "J3XNU067 before linear full-span physmap");
+-#endif
+ 	arm_vm_physmap_init(args);
+-#if defined(J3Y17LTE)
+-	sweet_early_mark(366, "J3XNU067 arm_vm_physmap_init returned");
+-#endif
+ 	set_mmu_ttb_alternate(cpu_ttep & TTBR_BADDR_MASK);
+@@ -2304,18 +2273,8 @@
+ 	flush_mmu_tlb();
+ 	sweet_early_mark(10, "TTBR0 off; TLB flushed");
+ 	kva_active = TRUE;
+-#if defined(J3Y17LTE)
+-	sweet_early_mark(367, "J3XNU067 final TTBR active");
+-#endif
+-#if defined(J3Y17LTE)
+-	/* From this point phystokv() can reach bank1 through ptov_table.
+-	 * Expand the pmap index space only now, after bootstrap linear mappings
+-	 * are no longer responsible for describing physical RAM. */
+-	sweet_early_mark(375, "J3XNU070 stock-style 1536MiB physmap active");
+-#endif
+ 
+ 	// global table pointers may need to be different due to physical aperture remapping
+ 	cpu_tte = (tt_entry_t*)(phystokv(cpu_ttep));
+ 	invalid_tte = (tt_entry_t*)(phystokv(invalid_ttep));
+ 	sweet_early_mark(11, "physmap table pointers rebound");
+-#if defined(J3Y17LTE)
+-	sweet_early_mark(368, "J3XNU067 physmap pointers rebound");
+-#endif
+ 
+ 	// From here on out, we're off the bootstrap translation tables.
+@@ -2372,21 +2331,8 @@
+ 		flush_mmu_tlb();
+ 	}
+ 
+-#if defined(J3Y17LTE)
+-	/*
+-	 * mem_size is deliberately the full 2 GiB physical index span so the
+-	 * physmap and per-PA pmap metadata can address the upper bank. Do not
+-	 * count the 24 MiB non-RAM hole as usable memory in VM accounting.
+-	 */
+-	const uint64_t j3_ram_hole_size = 0x01800000ULL;
+-	if (avail_start >= 0x7e800000ULL) {
+-		panic("J3 RAM: bootstrap allocations reached DRAM hole (0x%llx)", avail_start);
+-	}
+-	assert(mem_size >= j3_ram_hole_size);
+-	sane_size = mem_size - (avail_start - gPhysBase) - j3_ram_hole_size;
+-	max_mem = mem_size - j3_ram_hole_size;
+-#else
+ 	sane_size = mem_size - (avail_start - gPhysBase);
+ 	max_mem = mem_size;
+-#endif
+ 	vm_kernel_slid_base = segLOWESTTEXT;
+@@ -2434,9 +2380,6 @@
+ 	sweet_early_mark(12, "calling pmap_bootstrap");
+ 	pmap_bootstrap(dynamic_memory_begin);
+ 	sweet_early_mark(13, "pmap_bootstrap done");
+-#if defined(J3Y17LTE)
+-	sweet_early_mark(369, "J3XNU067 pmap_bootstrap returned");
+-#endif
+ 
+ 	disable_preemption();
+--- a/osfmk/arm/pmap/pmap.c
++++ b/osfmk/arm/pmap/pmap.c
+@@ -2568,11 +2568,6 @@
+ static unsigned int avail_page_count = 0;
+ static bool need_ram_ranges_init = true;
+-#if defined(J3Y17LTE)
+-#define J3_RAM_HOLE_START ((pmap_paddr_t)0x7e800000ULL)
+-#define J3_RAM_HOLE_END   ((pmap_paddr_t)0x80000000ULL)
+-#define J3_RAM_HOLE_SIZE  (J3_RAM_HOLE_END - J3_RAM_HOLE_START)
+-#endif
+ 
+ 
+ /**
+@@ -2600,25 +2595,12 @@
+ 	pmap_paddr_t first = first_avail;
+ 	pmap_paddr_t end = avail_end;
+ 
+-#if defined(J3Y17LTE)
+-	/* Normalize a bootstrap cursor that somehow landed inside the J3 hole. */
+-	if (first >= J3_RAM_HOLE_START && first < J3_RAM_HOLE_END) {
+-		first = J3_RAM_HOLE_END;
+-		first_avail = first;
+-	}
+-#endif
+-
+ 	assert(first <= end);
+ 	assert(first == (first & ~PAGE_MASK));
+ 	assert(end == (end & ~PAGE_MASK));
+ 	avail_page_count = atop(end - first);
+-#if defined(J3Y17LTE)
+-	/* The metadata index space intentionally spans the hole, but the early
+-	 * physical-page allocator must never hand those nonexistent pages to VM. */
+-	pmap_paddr_t hole_first = MAX(first, J3_RAM_HOLE_START);
+-	pmap_paddr_t hole_last = MIN(end, J3_RAM_HOLE_END);
+-	if (hole_first < hole_last) {
+-		avail_page_count -= atop(hole_last - hole_first);
+-	}
+-#endif
+ 
+ 	need_ram_ranges_init = false;
+ }
+@@ -2666,13 +2648,6 @@
+ 	}
+ 
+ 
+-#if defined(J3Y17LTE)
+-	if (first_avail >= J3_RAM_HOLE_START &&
+-	    first_avail < J3_RAM_HOLE_END) {
+-		first_avail = J3_RAM_HOLE_END;
+-	}
+-#endif
+-
+ 	if (first_avail != avail_end) {
+ 		*pnum = (ppnum_t)atop(first_avail);
+ 		first_avail += PAGE_SIZE;
+--- a/osfmk/arm/pmap/pmap_data.c
++++ b/osfmk/arm/pmap/pmap_data.c
+@@ -744,6 +744,13 @@
+ 	/* The maximum amount of padding should be (l2_cline_bytes - 1). */
+ 	assert((ptd_info_offset - pt_desc_bytes) < l2_cline_bytes);
+ 
++#if defined(J3Y17LTE)
++	/* Reserve pmap metadata for bank0 + hole + the first 536 MiB of bank1.
++	 * Initial VM ownership remains bank0-only; bank1 is hot-added later. */
++	const vm_size_t j3_pmap_metadata_span = 0x61800000ULL;
++#else
++	const vm_size_t j3_pmap_metadata_span = mem_size;
++#endif
++
+ 	/**
+ 	 * Allocate enough initial PTDs to map twice the available physical memory.
+@@ -754,7 +761,7 @@
+ 	 * needed to cover all of kernel-managed physical memory.
+ 	 */
+ 	const uint32_t num_leaf_page_tables =
+-	    (uint32_t)(mem_size / ((PAGE_SIZE / sizeof(pt_entry_t)) * ARM_PGBYTES));
++	    (uint32_t)(j3_pmap_metadata_span / ((PAGE_SIZE / sizeof(pt_entry_t)) * ARM_PGBYTES));
+@@ -769,7 +776,7 @@
+ 
+ 	/* Number of VM pages that span all of kernel-managed memory. */
+-	const unsigned int npages = (unsigned int)atop(mem_size);
++	const unsigned int npages = (unsigned int)atop(j3_pmap_metadata_span);
+ 
+ 	/* The pv_head_table and pp_attr_table both have one entry per VM page. */
+--- a/osfmk/mach/arm/vm_param.h
++++ b/osfmk/mach/arm/vm_param.h
+@@ -206,8 +206,15 @@
+  */
+ extern unsigned long            gVirtBase, gPhysBase, gPhysSize;
+ 
++#if defined(J3Y17LTE)
++#define isphysmem(a)            ((((vm_address_t)(a) - gPhysBase) < gPhysSize) || \
++	(((uint64_t)(a) >= 0x80000000ULL) && ((uint64_t)(a) < 0xa1800000ULL)))
++#else
+ #define isphysmem(a)            (((vm_address_t)(a) - gPhysBase) < gPhysSize)
++#endif
+ #define physmap_enclosed(a)     isphysmem(a)
+@@ -219,7 +226,13 @@
+  */
+ #include <stdint.h>
+ extern uint64_t                 gDramBase, gDramSize;
++#if defined(J3Y17LTE)
++#define is_dram_addr(addr)      ((((uint64_t)(addr) >= 0x40000000ULL) && \
++	((uint64_t)(addr) < 0x7e800000ULL)) || \
++	(((uint64_t)(addr) >= 0x80000000ULL) && ((uint64_t)(addr) < 0xa1800000ULL)))
++#else
+ #define is_dram_addr(addr)      (((uint64_t)(addr) - gDramBase) < gDramSize)
++#endif
+ 
+ #endif /* MACH_KERNEL_PRIVATE */
+--- a/osfmk/arm64/lowmem_vectors.c
++++ b/osfmk/arm64/lowmem_vectors.c
+@@ -204,6 +204,14 @@
+ 	lowGlo.lgPhysMapEnd = physmap_end;
+ }
+ 
++#if defined(J3Y17LTE)
++void
++j3y17lte_patch_low_glo_hotadd(uint64_t end)
++{
++	lowGlo.lgVmLastPhys = end;
++}
++#endif
++
+ void
+ patch_low_glo_vm_page_info(void * start_addr, void * end_addr, uint32_t first_ppnum)
+ {
+--- a/osfmk/vm/vm_init.c
++++ b/osfmk/vm/vm_init.c
+@@ -72,6 +72,57 @@
+ TUNABLE(bool, iokit_iomd_setownership_enabled,
+     "iokit_iomd_setownership_enabled", true);
+ 
++#if defined(J3Y17LTE)
++#include <arm/pmap.h>
++#include <arm/pmap/pmap_data.h>
++
++#define J3_BANK1_HOTADD_START ((pmap_paddr_t)0x80000000ULL)
++#define J3_BANK1_HOTADD_END   ((pmap_paddr_t)0xa1800000ULL)
++#define J3_BANK1_HOTADD_SIZE  ((vm_size_t)(J3_BANK1_HOTADD_END - J3_BANK1_HOTADD_START))
++
++extern vm_offset_t mem_size;
++extern uint64_t mem_actual;
++extern uint64_t max_mem;
++extern uint64_t max_mem_actual;
++extern uint64_t sane_size;
++extern void j3y17lte_register_hotadd_ptov(vm_map_address_t va, pmap_paddr_t pa, vm_size_t len);
++extern void j3y17lte_patch_low_glo_hotadd(uint64_t end);
++
++static void
++j3y17lte_hotadd_bank1(void)
++{
++	vm_offset_t va = 0;
++
++	/*
++	 * Reserve VA only: do not consume bank0 pages for the 536 MiB aperture.
++	 * Pmap metadata was pre-sized during pmap_data_bootstrap(), so extending
++	 * vm_last_phys before pmap_map() makes bank1 managed without touching the
++	 * nonexistent 24 MiB hole.
++	 */
++	kmem_alloc(kernel_map, &va, J3_BANK1_HOTADD_SIZE,
++	    KMA_PERMANENT | KMA_NOFAIL | KMA_KOBJECT | KMA_VAONLY,
++	    VM_KERN_MEMORY_OSFMK);
++
++	vm_last_phys = J3_BANK1_HOTADD_END;
++	vm_map_address_t mapped_end = pmap_map(va,
++	    J3_BANK1_HOTADD_START, J3_BANK1_HOTADD_END,
++	    VM_PROT_READ | VM_PROT_WRITE, VM_WIMG_USE_DEFAULT);
++	if (mapped_end != va + J3_BANK1_HOTADD_SIZE) {
++		panic("J3 HOTADD: bank1 pmap incomplete");
++	}
++
++	j3y17lte_register_hotadd_ptov(va, J3_BANK1_HOTADD_START, J3_BANK1_HOTADD_SIZE);
++	j3y17lte_patch_low_glo_hotadd(J3_BANK1_HOTADD_END);
++
++	vm_page_create((ppnum_t)atop_64(J3_BANK1_HOTADD_START),
++	    (ppnum_t)atop_64(J3_BANK1_HOTADD_END));
++
++	mem_size = 0x60000000ULL;
++	mem_actual = 0x60000000ULL;
++	max_mem = 0x60000000ULL;
++	max_mem_actual = 0x60000000ULL;
++	sane_size += J3_BANK1_HOTADD_SIZE;
++}
++#endif
++
+ static inline void
+ vm_mem_bootstrap_log(const char *message)
+ {
+@@ -120,6 +171,11 @@
+ 
+ 	kernel_startup_initialize_upto(STARTUP_SUB_ZALLOC);
+ 
++#if defined(J3Y17LTE)
++	vm_mem_bootstrap_log("J3XNU071 hot-add bank1");
++	j3y17lte_hotadd_bank1();
++#endif
++
+ 	if (iokit_iomd_setownership_enabled) {
+ 		kprintf("IOKit IOMD setownership ENABLED\n");
+ 	} else {
