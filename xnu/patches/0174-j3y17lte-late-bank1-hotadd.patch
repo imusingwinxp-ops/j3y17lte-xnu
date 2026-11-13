@@ -39,16 +39,6 @@
  	arm_vm_init(xmaxmem, args);
  	sweet_early_mark(15, "arm_vm_init returned");
  
-@@ -794,9 +769,2 @@
--#if defined(J3Y17LTE)
--	/* is_dram_addr() must include the upper 1 GiB bank. This value is the
--	 * enclosing physical DRAM span; pa_valid() still rejects the 24 MiB hole. */
--	gDramBase = 0x40000000ULL;
--	gDramSize = 0x61800000ULL;
--#else
- 	gDramBase = *dram_base;
- 	gDramSize = *dram_size;
--#endif
 --- a/osfmk/arm64/arm_vm_init.c
 +++ b/osfmk/arm64/arm_vm_init.c
 @@ -369,11 +369,6 @@
@@ -346,15 +336,7 @@
  		first_avail += PAGE_SIZE;
 --- a/osfmk/arm/pmap/pmap_data.c
 +++ b/osfmk/arm/pmap/pmap_data.c
-@@ -40,3 +40,7 @@
- 
- #include <arm/pmap/pmap_internal.h>
- 
-+#if defined(J3Y17LTE)
-+bool j3y17lte_upper_ram_online = false;
-+#endif
-+
-@@ -609,5 +613,13 @@
+@@ -609,5 +609,13 @@
  	/* The maximum amount of padding should be (l2_cline_bytes - 1). */
  	assert((ptd_info_offset - pt_desc_bytes) < l2_cline_bytes);
  
@@ -368,13 +350,13 @@
 +
  	/**
  	 * Allocate enough initial PTDs to map twice the available physical memory.
-@@ -616,4 +628,4 @@
+@@ -616,4 +624,4 @@
  	 * needed to cover all of kernel-managed physical memory.
  	 */
  	const uint32_t num_leaf_page_tables =
 -	    (uint32_t)(mem_size / ((PAGE_SIZE / sizeof(pt_entry_t)) * ARM_PGBYTES));
 +	    (uint32_t)(j3_pmap_metadata_span / ((PAGE_SIZE / sizeof(pt_entry_t)) * ARM_PGBYTES));
-@@ -632,5 +644,5 @@
+@@ -632,5 +640,5 @@
  
  	/* Number of VM pages that span all of kernel-managed memory. */
 -	const unsigned int npages = (unsigned int)atop(mem_size);
@@ -383,18 +365,17 @@
  	/* The pv_head_table and pp_attr_table both have one entry per VM page. */
 --- a/osfmk/arm/pmap/pmap_data.h
 +++ b/osfmk/arm/pmap/pmap_data.h
-@@ -62,6 +62,10 @@
+@@ -62,6 +62,9 @@
   */
  extern pmap_paddr_t vm_first_phys, vm_last_phys;
  
 +#if defined(J3Y17LTE)
-+extern bool j3y17lte_upper_ram_online;
 +#endif
 +
  /**
   * Return whether the given address represents a kernel-managed physical page.
   *
-@@ -74,18 +78,21 @@
+@@ -74,18 +77,21 @@
  static inline bool
  pa_valid(pmap_paddr_t pa)
  {
@@ -454,7 +435,7 @@
  #endif /* MACH_KERNEL_PRIVATE */
 --- a/osfmk/vm/vm_init.c
 +++ b/osfmk/vm/vm_init.c
-@@ -87,6 +87,63 @@
+@@ -87,6 +87,65 @@
  TUNABLE(bool, iokit_iomd_setownership_enabled,
      "iokit_iomd_setownership_enabled", true);
  
@@ -465,6 +446,8 @@
 +#define J3_BANK1_HOTADD_START ((pmap_paddr_t)0x80000000ULL)
 +#define J3_BANK1_HOTADD_END   ((pmap_paddr_t)0xc0000000ULL)
 +#define J3_BANK1_HOTADD_SIZE  ((vm_size_t)(J3_BANK1_HOTADD_END - J3_BANK1_HOTADD_START))
++
++bool j3y17lte_upper_ram_online = false;
 +
 +extern vm_offset_t mem_size;
 +extern uint64_t mem_actual;
@@ -518,7 +501,7 @@
  static inline void
  vm_mem_bootstrap_log(const char *message)
  {
-@@ -137,6 +194,11 @@
+@@ -137,6 +196,11 @@
  
  	kernel_startup_initialize_upto(STARTUP_SUB_ZALLOC);
  
