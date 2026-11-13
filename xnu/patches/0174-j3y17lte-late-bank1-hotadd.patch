@@ -455,7 +455,7 @@
  #endif /* MACH_KERNEL_PRIVATE */
 --- a/osfmk/vm/vm_init.c
 +++ b/osfmk/vm/vm_init.c
-@@ -72,6 +72,64 @@
+@@ -72,6 +72,63 @@
  TUNABLE(bool, iokit_iomd_setownership_enabled,
      "iokit_iomd_setownership_enabled", true);
  
@@ -499,7 +499,6 @@
 +
 +	/* Install the direct-map translation before bank1 becomes managed RAM. */
 +	j3y17lte_bank1_direct_base = va;
-+	__builtin_arm_dmb(DMB_ISHST);
 +	j3y17lte_upper_ram_online = true;
 +
 +	vm_page_create((ppnum_t)atop_64(J3_BANK1_HOTADD_START),
