@@ -1,6 +1,6 @@
 --- a/iokit/Kernel/arm/SweetCPU.cpp
 +++ b/iokit/Kernel/arm/SweetCPU.cpp
-@@ -168,8 +168,19 @@
+@@ -168,5 +168,17 @@
  		while (__atomic_load_n(&cpu->initialized, __ATOMIC_ACQUIRE) == 0 ||
  		    !sweet_cpu_signal_is_enabled(i)) {
 +#if defined(J3Y17LTE)
@@ -19,7 +19,7 @@
  			if (mach_absolute_time() > deadline) {
  #if defined(J3Y17LTE)
  				if (i < 4) {
-@@ -210,5 +221,9 @@
+@@ -210,7 +222,11 @@
  #else
  				IOLog(CPU_PORT_NAME " CPU: cpu=%u mpidr=0x%x NOT alive after 5s\n",
  				    i, topology->cpus[i].phys_id);
@@ -35,7 +35,7 @@
  		}
 --- a/pexpert/arm/pe_init.c
 +++ b/pexpert/arm/pe_init.c
-@@ -308,8 +308,18 @@
+@@ -308,4 +308,17 @@
  	while (((unsigned)(*delta + image_size)) >= (display_size / 2)) {
 -		*delta -= 50 * scale;
 -		assert(*delta >= 0);
@@ -65,7 +65,7 @@
  static unsigned j3_sda_pin;
  static unsigned j3_scl_pin;
  static uint16_t j3_f01_ctrl;
-@@ -500,7 +501,8 @@
+@@ -500,6 +501,7 @@
  	/* Prefer the real Samsung I2C_TSP controller. Keep the old bit-bang
  	 * bridge as a recovery fallback if the controller/clock is unavailable. */
 -	if (j3_hw_init() && j3_hw_probe()) {
@@ -74,7 +74,7 @@
  		j3_touch_hw_i2c = true;
  		printf("J3 INPUT: TD4100 HW-I2C ACK at 0x4b\n");
  		return true;
-@@ -808,9 +810,21 @@
+@@ -808,10 +810,19 @@
  				if ((setup_failures++ % 10u) == 0) {
  					printf("J3 INPUT: TD4100 not ready; retrying\n");
  				}
@@ -97,7 +97,7 @@
  			}
 --- a/bsd/net/dlil.c
 +++ b/bsd/net/dlil.c
-@@ -2938,6 +2938,17 @@
+@@ -2938,6 +2938,20 @@
  static kern_return_t
  dlil_affinity_set(struct thread *tp, u_int32_t tag)
  {
@@ -118,7 +118,7 @@
  	thread_affinity_policy_data_t policy;
  
  	bzero(&policy, sizeof(policy));
-@@ -2946,6 +2957,7 @@
+@@ -2946,3 +2960,4 @@
  	return thread_policy_set(tp, THREAD_AFFINITY_POLICY,
  	           (thread_policy_t)&policy, THREAD_AFFINITY_POLICY_COUNT);
 +#endif
