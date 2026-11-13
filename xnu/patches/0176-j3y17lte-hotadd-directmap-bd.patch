@@ -1,97 +1,30 @@
---- a/osfmk/arm/pmap/pmap.c
-+++ b/osfmk/arm/pmap/pmap.c
-@@ -1882,6 +1882,66 @@
- 	return virt;
- }
- 
-+#if defined(J3Y17LTE)
-+/*
-+ * J3XNU073: install the late bank1 direct-map like a physmap/backdoor
-+ * mapping.  pmap_map() is deliberately not used here: it routes through
-+ * pmap_enter() and PV bookkeeping, but this permanent direct-map must not
-+ * become a normal PV-tracked mapping.
-+ *
-+ * The VA was reserved with KMA_VAONLY.  Expand kernel page tables lazily as
-+ * required, then write normal cacheable RAM PTEs directly.
-+ */
-+vm_map_address_t
-+j3y17lte_pmap_map_ram_bd(
-+	vm_map_address_t virt,
-+	vm_offset_t start,
-+	vm_offset_t end,
-+	vm_prot_t prot)
-+{
-+	const pt_attr_t * const pt_attr = pmap_get_pt_attr(kernel_pmap);
-+	vm_map_address_t vaddr = virt;
-+	vm_offset_t paddr = start;
-+
-+	while (paddr < end) {
-+		pt_entry_t *ptep = pmap_pte(kernel_pmap, vaddr);
-+		if (ptep == PT_ENTRY_NULL) {
-+			kern_return_t kr = pmap_expand(kernel_pmap, vaddr, 0,
-+			    pt_attr_leaf_level(pt_attr));
-+			if (kr != KERN_SUCCESS) {
-+				panic("J3 HOTADD: pmap_expand failed kr=%d va=%p",
-+				    kr, (void *)vaddr);
-+			}
-+			ptep = pmap_pte(kernel_pmap, vaddr);
-+			if (ptep == PT_ENTRY_NULL) {
-+				panic("J3 HOTADD: no PTE after expand va=%p",
-+				    (void *)vaddr);
-+			}
-+		}
-+
-+		if (*ptep != ARM_PTE_TYPE_FAULT) {
-+			panic("J3 HOTADD: direct-map VA already populated va=%p pte=0x%llx",
-+			    (void *)vaddr, (uint64_t)*ptep);
-+		}
-+
-+		pt_entry_t pte = pa_to_pte(paddr) |
-+		    ARM_PTE_TYPE | ARM_PTE_AF | ARM_PTE_NX | ARM_PTE_PNX |
-+		    ARM_PTE_AP((prot & VM_PROT_WRITE) ? AP_RWNA : AP_RONA) |
-+		    ARM_PTE_ATTRINDX(CACHE_ATTRINDX_DEFAULT) |
-+		    ARM_PTE_SH(SH_OUTER_MEMORY);
-+#if __ARM_KERNEL_PROTECT__
-+		pte |= ARM_PTE_NG;
-+#endif
-+		write_pte_strong(ptep, pte);
-+
-+		vaddr += PAGE_SIZE;
-+		paddr += PAGE_SIZE;
-+	}
-+
-+	if (end > start) {
-+		flush_mmu_tlb_region(virt, (unsigned)(end - start));
-+	}
-+	return vaddr;
-+}
-+#endif
-+
- vm_map_address_t
- pmap_map_bd_with_options(
- 	vm_map_address_t virt,
---- a/osfmk/vm/vm_init.c
-+++ b/osfmk/vm/vm_init.c
-@@ -103,6 +103,10 @@
- extern uint64_t sane_size;
- extern vm_map_address_t j3y17lte_bank1_direct_base;
- 
-+extern vm_map_address_t j3y17lte_pmap_map_ram_bd(
-+	vm_map_address_t virt, vm_offset_t start, vm_offset_t end,
-+	vm_prot_t prot);
-+
- static void
- j3y17lte_hotadd_bank1(void)
+--- a/osfmk/arm/pmap/pmap_data.h
++++ b/osfmk/arm/pmap/pmap_data.h
+@@ -82,17 +82,21 @@
+ pa_valid(pmap_paddr_t pa)
  {
-@@ -124,9 +128,9 @@
- 	kprintf("J3 HOTADD: reserve VA ok %p\n", (void *)va);
- 
- 	kprintf("J3 HOTADD: pmap bank1 begin\n");
--	vm_map_address_t mapped_end = pmap_map(va,
-+	vm_map_address_t mapped_end = j3y17lte_pmap_map_ram_bd(va,
- 	    J3_BANK1_HOTADD_START, J3_BANK1_HOTADD_END,
--	    VM_PROT_READ | VM_PROT_WRITE, VM_WIMG_USE_DEFAULT);
-+	    VM_PROT_READ | VM_PROT_WRITE);
- 	if (mapped_end != va + J3_BANK1_HOTADD_SIZE) {
- 		panic("J3 HOTADD: bank1 pmap incomplete");
+ #if defined(J3Y17LTE)
++	/*
++	 * J3XNU073: bank1 is a late-hot-added range.  Test it before the
++	 * loader-provided vm_first_phys..vm_last_phys span so a broad loader
++	 * range cannot accidentally make bank1 PV-managed before its direct-map
++	 * exists.
++	 */
++	if (pa >= 0x80000000ULL && pa < 0xc0000000ULL) {
++		return j3y17lte_upper_ram_online;
++	}
+ 	/* The Samsung hole is never RAM, regardless of what the loader reports. */
+ 	if (pa >= 0x7e800000ULL && pa < 0x80000000ULL) {
+ 		return false;
  	}
+ 	/* Keep the loader-provided lower managed range exactly as booted. */
+-	if ((pa >= vm_first_phys) && (pa < vm_last_phys)) {
+-		return true;
+-	}
+-	/* Bank1 only becomes managed after its late direct-map is installed. */
+-	return j3y17lte_upper_ram_online &&
+-	    (pa >= 0x80000000ULL) && (pa < 0xc0000000ULL);
++	return (pa >= vm_first_phys) && (pa < vm_last_phys);
+ #else
+ 	return (pa >= vm_first_phys) && (pa < vm_last_phys);
+ #endif
