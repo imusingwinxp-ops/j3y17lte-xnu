@@ -1,0 +1,83 @@
+--- a/osfmk/arm/arm_init.c
++++ b/osfmk/arm/arm_init.c
+@@ -375,7 +375,7 @@
+ 	if (const_boot_args.physBase != 0x40000000ULL) {
+ 		panic("J3 RAM: unexpected physBase 0x%llx", const_boot_args.physBase);
+ 	}
+-	const_boot_args.memSize = 0x3e800000ULL;
++	const_boot_args.memSize = 0x61800000ULL;
+ 	const_boot_args.memSizeActual = 0x60000000ULL;
+ #endif
+ 	BootArgs = args = &const_boot_args;
+--- a/osfmk/arm64/arm_vm_init.c
++++ b/osfmk/arm64/arm_vm_init.c
+@@ -379,6 +379,8 @@
+ #define J3_RAM_TARGET_END         ((pmap_paddr_t)0xa1800000ULL)
+ #define J3_RAM_TARGET_SPAN_SIZE   ((uint64_t)0x61800000ULL)
+ #define J3_RAM_TARGET_USABLE_SIZE ((uint64_t)0x60000000ULL)
++#define J3_PHYSMAP_SLIDE_RANGE    (1ULL << 28)
++#define J3_PHYSMAP_SLIDE_MASK     (J3_PHYSMAP_SLIDE_RANGE - 1)
+ #endif
+ SECURITY_READ_ONLY_LATE(static ptov_table_entry)        ptov_table[PTOV_TABLE_SIZE];
+ SECURITY_READ_ONLY_LATE(static boolean_t)               kva_active = FALSE;
+@@ -1879,11 +1881,12 @@
+ #if defined(ARM_LARGE_MEMORY)
+ #if defined(J3Y17LTE)
+ 	/*
+-	 * J3XNU069: size the early aperture exactly as the proven 1000 MiB
+-	 * bootstrap does. Extra upper-bank page-table coverage is added only
+-	 * after the rest of early VM initialization has completed.
++	 * J3XNU070: 1536 MiB usable RAM occupies a 1560 MiB enclosing PA span.
++	 * A 256 MiB slide keeps the entire aperture plus alignment padding inside
++	 * the same two 1-GiB L1 slots used by the known-good 1000 MiB boot.
+ 	 */
+-	unsigned long physmap_l1_entries = ((real_phys_size + ARM64_PHYSMAP_SLIDE_RANGE + ARM64_PHYSMAP_ALIGNMENT_PADDING) >> ARM_TT_L1_SHIFT) + 1;
++	unsigned long physmap_l1_entries = ((real_phys_size + J3_PHYSMAP_SLIDE_RANGE + ARM64_PHYSMAP_ALIGNMENT_PADDING) >> ARM_TT_L1_SHIFT) + 1;
+ #else
+ 	unsigned long physmap_l1_entries = ((real_phys_size + ARM64_PHYSMAP_SLIDE_RANGE + ARM64_PHYSMAP_ALIGNMENT_PADDING) >> ARM_TT_L1_SHIFT) + 1;
+ #endif
+@@ -1894,7 +1897,7 @@
+ 
+ 	// Slide the physical aperture to a random page-aligned location within the slide range
+ #if defined(J3Y17LTE)
+-	uint64_t physmap_slide = 0;
++	uint64_t physmap_slide = early_random() & J3_PHYSMAP_SLIDE_MASK & ~((uint64_t)PAGE_MASK);
+ #else
+ 	uint64_t physmap_slide = early_random() & ARM64_PHYSMAP_SLIDE_MASK & ~((uint64_t)PAGE_MASK);
+ #endif
+@@ -2271,25 +2274,8 @@
+ #endif
+ #if defined(J3Y17LTE)
+-	/*
+-	 * J3XNU069 boot target: retain the known-good lower-bank VM geometry
+-	 * throughout early initialization. Only now allocate any missing L1/L2
+-	 * table coverage for a 1536 MiB usable target (1000 MiB bank0 + 536 MiB
+-	 * bank1). The 24 MiB hole stays mapped only as aperture VA and is never
+-	 * handed to the physical-page allocator.
+-	 */
+-	sweet_early_mark(371, "J3XNU069 delayed upper physmap tables begin");
+-	vm_map_address_t j3_target_physmap_end =
+-	    physmap_base + J3_RAM_TARGET_SPAN_SIZE + ARM64_PHYSMAP_ALIGNMENT_PADDING;
+-	init_ptpages(cpu_tte, physmap_base, ROUND_L1(j3_target_physmap_end), TRUE,
+-	    ARM_DYNAMIC_TABLE_XN | ARM_TTE_TABLE_AP(ARM_TTE_TABLE_AP_USER_NA));
+-	physmap_end = j3_target_physmap_end;
+-	real_avail_end = J3_RAM_TARGET_END;
+-	sweet_early_mark(372, "J3XNU069 delayed upper physmap tables ready");
++	sweet_early_mark(374, "J3XNU070 stock-style 1536MiB physmap begin");
+ 	sweet_early_mark(363, "J3XNU067 before linear full-span physmap");
+ #endif
+ 	arm_vm_physmap_init(args);
+@@ -2330,12 +2316,7 @@
+ 	/* From this point phystokv() can reach bank1 through ptov_table.
+ 	 * Expand the pmap index space only now, after bootstrap linear mappings
+ 	 * are no longer responsible for describing physical RAM. */
+-	gPhysSize = J3_RAM_TARGET_SPAN_SIZE;
+-	real_phys_size = J3_RAM_TARGET_SPAN_SIZE;
+-	mem_size = J3_RAM_TARGET_SPAN_SIZE;
+-	avail_end = J3_RAM_TARGET_END;
+-	sweet_early_mark(370, "J3XNU068 full physical span activated");
+-	sweet_early_mark(373, "J3XNU069 1536MiB usable target activated");
++	sweet_early_mark(375, "J3XNU070 stock-style 1536MiB physmap active");
+ #endif
+ 
+ 	// global table pointers may need to be different due to physical aperture remapping
