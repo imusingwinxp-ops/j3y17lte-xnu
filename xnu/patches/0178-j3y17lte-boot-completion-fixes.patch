@@ -99,7 +99,7 @@
  			}
 --- a/bsd/net/dlil.c
 +++ b/bsd/net/dlil.c
-@@ -2938,6 +2938,20 @@
+@@ -2372,10 +2372,25 @@
  static kern_return_t
  dlil_affinity_set(struct thread *tp, u_int32_t tag)
  {
@@ -120,7 +120,7 @@
  	thread_affinity_policy_data_t policy;
  
  	bzero(&policy, sizeof(policy));
-@@ -2946,3 +2960,4 @@
+ 	policy.affinity_tag = tag;
  	return thread_policy_set(tp, THREAD_AFFINITY_POLICY,
  	           (thread_policy_t)&policy, THREAD_AFFINITY_POLICY_COUNT);
 +#endif
