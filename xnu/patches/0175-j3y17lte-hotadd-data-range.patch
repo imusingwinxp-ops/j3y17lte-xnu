@@ -1,0 +1,37 @@
+--- a/osfmk/vm/vm_init.c
++++ b/osfmk/vm/vm_init.c
+@@ -112,16 +112,27 @@
+ 	 * translation. Only after the mapping and PTOV entry are live do we expose
+ 	 * bank1 to pa_valid() and vm_page_create().
+ 	 */
+-	kmem_alloc(kernel_map, &va, J3_BANK1_HOTADD_SIZE,
+-	    KMA_PERMANENT | KMA_NOFAIL | KMA_KOBJECT | KMA_VAONLY,
++	printf("J3 HOTADD: reserve 1GiB DATA VA begin\n");
++	kern_return_t kr = kmem_alloc(kernel_map, &va, J3_BANK1_HOTADD_SIZE,
++	    KMA_PERMANENT | KMA_KOBJECT | KMA_VAONLY | KMA_DATA,
+ 	    VM_KERN_MEMORY_OSFMK);
++	if (kr != KERN_SUCCESS) {
++		panic("J3 HOTADD: bank1 VA reserve failed kr=%d", kr);
++	}
++	printf("J3 HOTADD: reserve VA ok %p\n", (void *)va);
+ 
++	printf("J3 HOTADD: pmap bank1 begin\n");
+ 	vm_map_address_t mapped_end = pmap_map(va,
+ 	    J3_BANK1_HOTADD_START, J3_BANK1_HOTADD_END,
+ 	    VM_PROT_READ | VM_PROT_WRITE, VM_WIMG_USE_DEFAULT);
+ 	if (mapped_end != va + J3_BANK1_HOTADD_SIZE) {
+ 		panic("J3 HOTADD: bank1 pmap incomplete");
+ 	}
++	printf("J3 HOTADD: pmap bank1 ok\n");
+ 
+ 	/* Install the direct-map translation before bank1 becomes managed RAM. */
+ 	j3y17lte_bank1_direct_base = va;
+ 	j3y17lte_upper_ram_online = true;
++	printf("J3 HOTADD: bank1 pa_valid online\n");
+ 
+ 	vm_page_create((ppnum_t)atop_64(J3_BANK1_HOTADD_START),
+ 	    (ppnum_t)atop_64(J3_BANK1_HOTADD_END));
++	printf("J3 HOTADD: vm_page_create bank1 done\n");
+ 
+ 	mem_size += J3_BANK1_HOTADD_SIZE;
+ 	max_mem += J3_BANK1_HOTADD_SIZE;
