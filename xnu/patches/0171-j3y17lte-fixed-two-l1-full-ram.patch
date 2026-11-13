@@ -1,0 +1,59 @@
+--- a/osfmk/arm64/arm_vm_init.c
++++ b/osfmk/arm64/arm_vm_init.c
+@@ -1873,11 +1873,18 @@
+ #if defined(ARM_LARGE_MEMORY)
+ #if defined(J3Y17LTE)
+-	unsigned long physmap_l1_entries = ((J3_RAM_SPAN_SIZE + ARM64_PHYSMAP_SLIDE_RANGE + ARM64_PHYSMAP_ALIGNMENT_PADDING) >> ARM_TT_L1_SHIFT) + 1;
++	/*
++	 * J3XNU068: keep the proven two-L1 bootstrap VA geometry. The J3 DRAM
++	 * enclosing span is exactly 2 GiB; reserving a third L1 slot moves the
++	 * aperture base and faults before arm_vm_physmap_init() is reached.
++	 */
++	unsigned long physmap_l1_entries =
++	    (J3_RAM_SPAN_SIZE + ARM_TT_L1_SIZE - 1) >> ARM_TT_L1_SHIFT;
+ #else
+ 	unsigned long physmap_l1_entries = ((real_phys_size + ARM64_PHYSMAP_SLIDE_RANGE + ARM64_PHYSMAP_ALIGNMENT_PADDING) >> ARM_TT_L1_SHIFT) + 1;
+ #endif
+ 	physmap_base = VM_MIN_KERNEL_ADDRESS - (physmap_l1_entries << ARM_TT_L1_SHIFT);
+ #else
+ 	physmap_base = phystokv(args->topOfKernelData);
+ #endif
+ 
+ 	// Slide the physical aperture to a random page-aligned location within the slide range
++#if defined(J3Y17LTE)
++	uint64_t physmap_slide = 0;
++#else
+ 	uint64_t physmap_slide = early_random() & ARM64_PHYSMAP_SLIDE_MASK & ~((uint64_t)PAGE_MASK);
++#endif
+ 	assert(physmap_slide < ARM64_PHYSMAP_SLIDE_RANGE);
+@@ -1902,7 +1909,12 @@
+ 	/* For large memory systems with no PPL such as virtual machines */
+ 	static_memory_end = phystokv(args->topOfKernelData);
+ #if defined(J3Y17LTE)
+-	physmap_end = physmap_base + J3_RAM_SPAN_SIZE + ARM64_PHYSMAP_ALIGNMENT_PADDING;
++	/*
++	 * With the J3 slide fixed at zero, the two-L1 aperture ends exactly at
++	 * VM_MIN_KERNEL_ADDRESS. arm_vm_physmap_init() leaves the static kernel
++	 * image out of the relocated aperture, providing ample alignment slack.
++	 */
++	physmap_end = physmap_base + J3_RAM_SPAN_SIZE;
+ #else
+ 	physmap_end = physmap_base + real_phys_size + ARM64_PHYSMAP_ALIGNMENT_PADDING;
+ #endif
+@@ -2295,9 +2307,15 @@
+ 	kva_active = TRUE;
+ #if defined(J3Y17LTE)
+ 	sweet_early_mark(367, "J3XNU067 final TTBR active");
+ #endif
+ #if defined(J3Y17LTE)
+ 	/* From this point phystokv() can reach bank1 through ptov_table.
+ 	 * Expand the pmap index space only now, after bootstrap linear mappings
+ 	 * are no longer responsible for describing physical RAM. */
++	gPhysSize = J3_RAM_SPAN_SIZE;
++	real_phys_size = J3_RAM_SPAN_SIZE;
+ 	mem_size = J3_RAM_SPAN_SIZE;
+ 	avail_end = J3_RAM_BANK1_END;
++	sweet_early_mark(370, "J3XNU068 full physical span activated");
+ #endif
+ 
+ 	// global table pointers may need to be different due to physical aperture remapping
