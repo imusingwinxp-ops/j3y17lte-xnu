@@ -158,6 +158,32 @@
  	return (vm_address_t)(va) - gVirtBase + gPhysBase;
  }
  
+@@ -1710,25 +1700,7 @@
+ 	arm_vm_page_granular_RWNX(end_kern, phystokv(args->topOfKernelData) - end_kern,
+ 	    ARM64_GRANULE_ALLOW_BLOCK | ARM64_GRANULE_ALLOW_HINT); /* Device Tree (if not locked down), RAM Disk (if present), bootArgs */
+ 
+-#if defined(J3Y17LTE)
+-	if (args->topOfKernelData >= J3_RAM_BANK0_END) {
+-		panic("J3 RAM: topOfKernelData outside bank0 (0x%llx)", args->topOfKernelData);
+-	}
+-	/*
+-	 * Keep one linear final aperture from bank0 through bank1, including PTEs
+-	 * for the 24 MiB physical hole. Nothing may allocate/use those hole pages:
+-	 * pmap_next_page() skips them and pa_valid() rejects them. Keeping the VA
+-	 * offset preserves XNU's PA<->physmap arithmetic across the upper bank.
+-	 */
+-	sweet_early_mark(364, "J3XNU067 linear full-span physmap entered");
+-	arm_vm_physmap_slide(temp_ptov_table,
+-	    (args->topOfKernelData - gPhysBase + gVirtBase),
+-	    J3_RAM_TARGET_END - args->topOfKernelData,
+-	    AP_RWNA, ARM64_GRANULE_ALLOW_BLOCK | ARM64_GRANULE_ALLOW_HINT);
+-	sweet_early_mark(365, "J3XNU067 linear full-span physmap completed");
+-#else
+ 	arm_vm_physmap_slide(temp_ptov_table, (args->topOfKernelData - gPhysBase + gVirtBase),
+ 	    real_avail_end - args->topOfKernelData, AP_RWNA, ARM64_GRANULE_ALLOW_BLOCK | ARM64_GRANULE_ALLOW_HINT); // rest of physmem
+-#endif
+ 
+ 	assert((temp_ptov_table[ptov_index - 1].va + temp_ptov_table[ptov_index - 1].len) <= physmap_end);
 @@ -1890,27 +1903,11 @@
  
  #if defined(ARM_LARGE_MEMORY)
@@ -202,32 +228,6 @@
  #else
  #if defined(J3Y17LTE)
  	/* Preserve PA offsets across the J3 aperture; the allocator still skips the hole. */
-@@ -1710,25 +1700,7 @@
- 	arm_vm_page_granular_RWNX(end_kern, phystokv(args->topOfKernelData) - end_kern,
- 	    ARM64_GRANULE_ALLOW_BLOCK | ARM64_GRANULE_ALLOW_HINT); /* Device Tree (if not locked down), RAM Disk (if present), bootArgs */
- 
--#if defined(J3Y17LTE)
--	if (args->topOfKernelData >= J3_RAM_BANK0_END) {
--		panic("J3 RAM: topOfKernelData outside bank0 (0x%llx)", args->topOfKernelData);
--	}
--	/*
--	 * Keep one linear final aperture from bank0 through bank1, including PTEs
--	 * for the 24 MiB physical hole. Nothing may allocate/use those hole pages:
--	 * pmap_next_page() skips them and pa_valid() rejects them. Keeping the VA
--	 * offset preserves XNU's PA<->physmap arithmetic across the upper bank.
--	 */
--	sweet_early_mark(364, "J3XNU067 linear full-span physmap entered");
--	arm_vm_physmap_slide(temp_ptov_table,
--	    (args->topOfKernelData - gPhysBase + gVirtBase),
--	    J3_RAM_TARGET_END - args->topOfKernelData,
--	    AP_RWNA, ARM64_GRANULE_ALLOW_BLOCK | ARM64_GRANULE_ALLOW_HINT);
--	sweet_early_mark(365, "J3XNU067 linear full-span physmap completed");
--#else
- 	arm_vm_physmap_slide(temp_ptov_table, (args->topOfKernelData - gPhysBase + gVirtBase),
- 	    real_avail_end - args->topOfKernelData, AP_RWNA, ARM64_GRANULE_ALLOW_BLOCK | ARM64_GRANULE_ALLOW_HINT); // rest of physmem
--#endif
- 
- 	assert((temp_ptov_table[ptov_index - 1].va + temp_ptov_table[ptov_index - 1].len) <= physmap_end);
 @@ -2276,12 +2249,5 @@
  	 */
  	sweet_early_map_final();
