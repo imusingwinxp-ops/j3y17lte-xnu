@@ -39,7 +39,7 @@
  	arm_vm_init(xmaxmem, args);
  	sweet_early_mark(15, "arm_vm_init returned");
  
-@@ -693,16 +669,9 @@
+@@ -693,15 +669,8 @@
  	}
  	sweet_early_mark(33, "dram-size found");
  
