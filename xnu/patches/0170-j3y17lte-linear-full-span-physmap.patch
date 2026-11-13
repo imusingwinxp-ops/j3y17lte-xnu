@@ -1,6 +1,6 @@
 --- a/osfmk/arm64/arm_vm_init.c
 +++ b/osfmk/arm64/arm_vm_init.c
-@@ -1873,7 +1873,7 @@
+@@ -1873,6 +1875,6 @@
  #if defined(ARM_LARGE_MEMORY)
  #if defined(J3Y17LTE)
 -	unsigned long physmap_l1_entries = ((J3_RAM_USABLE_SIZE + ARM64_PHYSMAP_SLIDE_RANGE + ARM64_PHYSMAP_ALIGNMENT_PADDING) >> ARM_TT_L1_SHIFT) + 1;
@@ -8,7 +8,7 @@
  #else
  	unsigned long physmap_l1_entries = ((real_phys_size + ARM64_PHYSMAP_SLIDE_RANGE + ARM64_PHYSMAP_ALIGNMENT_PADDING) >> ARM_TT_L1_SHIFT) + 1;
  #endif
-@@ -1902,17 +1902,17 @@
+@@ -1902,15 +1904,15 @@
  	/* For large memory systems with no PPL such as virtual machines */
  	static_memory_end = phystokv(args->topOfKernelData);
  #if defined(J3Y17LTE)
@@ -28,7 +28,7 @@
  #else
  	static_memory_end = physmap_base + mem_size + ARM64_PHYSMAP_ALIGNMENT_PADDING; // worst possible case for block alignment
  	physmap_end = physmap_base + real_phys_size + ARM64_PHYSMAP_ALIGNMENT_PADDING;
-@@ -1699,15 +1699,15 @@
+@@ -1699,16 +1699,18 @@
  	if (args->topOfKernelData >= J3_RAM_BANK0_END) {
  		panic("J3 RAM: topOfKernelData outside bank0 (0x%llx)", args->topOfKernelData);
  	}
@@ -54,7 +54,7 @@
  #else
  	arm_vm_physmap_slide(temp_ptov_table, (args->topOfKernelData - gPhysBase + gVirtBase),
  	    real_avail_end - args->topOfKernelData, AP_RWNA, ARM64_GRANULE_ALLOW_BLOCK | ARM64_GRANULE_ALLOW_HINT); // rest of physmem
-@@ -2267,8 +2267,12 @@
+@@ -2267,6 +2269,10 @@
  #if defined(J3Y17LTE)
 -	/* Permit page-table construction for the separately mapped upper bank. */
 +	/* Permit page-table construction across the complete J3 physical span. */
@@ -66,7 +66,7 @@
 +	sweet_early_mark(366, "J3XNU067 arm_vm_physmap_init returned");
 +#endif
  	set_mmu_ttb_alternate(cpu_ttep & TTBR_BADDR_MASK);
-@@ -2287,6 +2291,9 @@
+@@ -2287,5 +2293,8 @@
  	flush_mmu_tlb();
  	sweet_early_mark(10, "TTBR0 off; TLB flushed");
  	kva_active = TRUE;
@@ -75,7 +75,7 @@
 +#endif
  #if defined(J3Y17LTE)
  	/* From this point phystokv() can reach bank1 through ptov_table.
-@@ -2299,6 +2306,9 @@
+@@ -2299,4 +2308,7 @@
  	cpu_tte = (tt_entry_t*)(phystokv(cpu_ttep));
  	invalid_tte = (tt_entry_t*)(phystokv(invalid_ttep));
  	sweet_early_mark(11, "physmap table pointers rebound");
@@ -84,9 +84,7 @@
 +#endif
  
  	// From here on out, we're off the bootstrap translation tables.
-@@ -2361,6 +2371,9 @@
- 	dynamic_memory_begin = ROUND_TWIG(dynamic_memory_begin);
-@@ -2419,6 +2432,9 @@
+@@ -2419,2 +2431,5 @@
  	pmap_bootstrap(dynamic_memory_begin);
 +#if defined(J3Y17LTE)
 +	sweet_early_mark(369, "J3XNU067 pmap_bootstrap returned");
