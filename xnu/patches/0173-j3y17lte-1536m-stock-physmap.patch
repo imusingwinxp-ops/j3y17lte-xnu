@@ -20,7 +20,7 @@
  #endif
  SECURITY_READ_ONLY_LATE(static ptov_table_entry)        ptov_table[PTOV_TABLE_SIZE];
  SECURITY_READ_ONLY_LATE(static boolean_t)               kva_active = FALSE;
-@@ -1879,11 +1881,11 @@
+@@ -1879,11 +1881,14 @@
  #if defined(ARM_LARGE_MEMORY)
  #if defined(J3Y17LTE)
  	/*
@@ -32,6 +32,9 @@
 +	 * the same two 1-GiB L1 slots used by the known-good 1000 MiB boot.
  	 */
 -	unsigned long physmap_l1_entries = ((real_phys_size + ARM64_PHYSMAP_SLIDE_RANGE + ARM64_PHYSMAP_ALIGNMENT_PADDING) >> ARM_TT_L1_SHIFT) + 1;
++	_Static_assert((J3_RAM_TARGET_SPAN_SIZE + J3_PHYSMAP_SLIDE_RANGE +
++	    ARM64_PHYSMAP_ALIGNMENT_PADDING) < (2ULL * ARM_TT_L1_SIZE),
++	    "J3 1536MiB target must fit the known-good two-L1 physmap geometry");
 +	unsigned long physmap_l1_entries = ((real_phys_size + J3_PHYSMAP_SLIDE_RANGE + ARM64_PHYSMAP_ALIGNMENT_PADDING) >> ARM_TT_L1_SHIFT) + 1;
  #else
  	unsigned long physmap_l1_entries = ((real_phys_size + ARM64_PHYSMAP_SLIDE_RANGE + ARM64_PHYSMAP_ALIGNMENT_PADDING) >> ARM_TT_L1_SHIFT) + 1;
