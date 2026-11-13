@@ -1,0 +1,62 @@
+name: J3 patch preflight
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - "xnu/patches/**"
+      - ".github/workflows/j3-patch-preflight.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  apply-stack:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout patch repo
+        uses: actions/checkout@v4
+
+      - name: Clone exact XNU base
+        run: |
+          set -euo pipefail
+          git clone --depth 1 --branch xnu-8796.141.3 \
+            https://github.com/apple-oss-distributions/xnu.git \
+            preflight-xnu
+          git -C preflight-xnu rev-parse HEAD
+          test "$(git -C preflight-xnu rev-parse HEAD)" = "1b191cb58250d0705d8a51287127505aa4bc0789"
+
+      - name: Stage external source
+        run: |
+          set -euo pipefail
+          cd preflight-xnu
+          for script in ../xnu/patches/*.sh; do
+            echo "RUN: $(basename "$script")"
+            bash "$script"
+          done
+
+      - name: Apply complete J3 patch stack
+        run: |
+          set -euo pipefail
+          cd preflight-xnu
+          for patch in ../xnu/patches/*.patch; do
+            echo "APPLY: $(basename "$patch")"
+            git apply --check "$patch"
+            git apply "$patch"
+          done
+
+      - name: Validate J3XNU075 source markers
+        run: |
+          set -euo pipefail
+          cd preflight-xnu
+          grep -nF 'j3y17lte_send_ipi(i);' iokit/Kernel/arm/SweetCPU.cpp
+          grep -nF 'if (*delta < step) {' pexpert/arm/pe_init.c
+          grep -nF 'static bool j3_touch_force_gpio;' bsd/dev/j3y17lte_input.c
+          grep -nF 'J3 INPUT: HW-I2C RMI setup failed; switching to GPIO transport' bsd/dev/j3y17lte_input.c
+          grep -nF 'return KERN_NOT_SUPPORTED;' bsd/net/dlil.c
+
+      - name: Diff sanity
+        run: |
+          cd preflight-xnu
+          git diff --check || true
