@@ -35,26 +35,28 @@
  		}
 --- a/pexpert/arm/pe_init.c
 +++ b/pexpert/arm/pe_init.c
-@@ -308,4 +308,17 @@
- 	while (((unsigned)(*delta + image_size)) >= (display_size / 2)) {
--		*delta -= 50 * scale;
--		assert(*delta >= 0);
-+		int step = 50 * scale;
+@@ -306,14 +306,21 @@
+ 		default:
+ 			display_size = PE_state.video.v_width;
+ 			image_size = default_progress.width;
+ 			delta = &default_progress.dx;
+ 		}
+ 		assert(*delta >= 0);
+ 		while (((unsigned)(*delta + image_size)) >= (display_size / 2)) {
 +#if defined(J3Y17LTE)
-+		/*
-+		 * The J3's 720-pixel panel can make Apple's boot-progress
-+		 * centering step overshoot below zero.  Saturate at zero instead
-+		 * of panicking; this preserves the progress renderer and removes
-+		 * the need for -noprogress.
-+		 */
-+		if (*delta < step) {
-+			*delta = 0;
-+			break;
-+		}
++			int step = 50 * scale;
++			if (*delta < step) {
++				*delta = 0;
++				break;
++			}
 +#endif
-+		*delta -= step;
-+		assert(*delta >= 0);
- 	}
+ 			*delta -= 50 * scale;
+ 			assert(*delta >= 0);
+ 		}
+ 		*delta *= flip;
+ 
+ 		/* Check for DT-defined progress y delta */
+ 		PE_get_default("progress-dy", &default_progress.dy, sizeof(default_progress.dy));
 --- a/bsd/dev/j3y17lte_input.c
 +++ b/bsd/dev/j3y17lte_input.c
 @@ -63,6 +63,7 @@
