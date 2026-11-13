@@ -1,0 +1,24 @@
+--- a/osfmk/arm64/arm_vm_init.c
++++ b/osfmk/arm64/arm_vm_init.c
+@@ -1872,7 +1872,12 @@
+ #if defined(ARM_LARGE_MEMORY)
++#if defined(J3Y17LTE)
++	unsigned long physmap_l1_entries = ((J3_RAM_USABLE_SIZE + ARM64_PHYSMAP_SLIDE_RANGE + ARM64_PHYSMAP_ALIGNMENT_PADDING) >> ARM_TT_L1_SHIFT) + 1;
++#else
+ 	unsigned long physmap_l1_entries = ((real_phys_size + ARM64_PHYSMAP_SLIDE_RANGE + ARM64_PHYSMAP_ALIGNMENT_PADDING) >> ARM_TT_L1_SHIFT) + 1;
++#endif
+ 	physmap_base = VM_MIN_KERNEL_ADDRESS - (physmap_l1_entries << ARM_TT_L1_SHIFT);
+ #else
+ 	physmap_base = phystokv(args->topOfKernelData);
+@@ -1896,8 +1901,13 @@
+ #if defined(ARM_LARGE_MEMORY)
+ 	/* For large memory systems with no PPL such as virtual machines */
+ 	static_memory_end = phystokv(args->topOfKernelData);
++#if defined(J3Y17LTE)
++	physmap_end = physmap_base + J3_RAM_USABLE_SIZE + ARM64_PHYSMAP_ALIGNMENT_PADDING;
++#else
+ 	physmap_end = physmap_base + real_phys_size + ARM64_PHYSMAP_ALIGNMENT_PADDING;
++#endif
+ #else
+ #if defined(J3Y17LTE)
+ 	/* The final J3 physmap packs bank0 + bank1 and deliberately omits the hole. */
