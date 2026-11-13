@@ -1,6 +1,6 @@
 --- a/osfmk/arm/arm_init.c
 +++ b/osfmk/arm/arm_init.c
-@@ -356,24 +356,6 @@
+@@ -356,25 +356,6 @@
  
  	/* If kernel integrity is supported, use a constant copy of the boot args. */
  	const_boot_args = *args;
@@ -39,7 +39,7 @@
  	arm_vm_init(xmaxmem, args);
  	sweet_early_mark(15, "arm_vm_init returned");
  
-@@ -693,15 +669,8 @@
+@@ -693,16 +669,9 @@
  	}
  	sweet_early_mark(33, "dram-size found");
  
@@ -57,7 +57,7 @@
  	/*
 --- a/osfmk/arm64/arm_vm_init.c
 +++ b/osfmk/arm64/arm_vm_init.c
-@@ -377,12 +377,6 @@
+@@ -377,11 +377,6 @@
  #define J3_RAM_BANK1_END    ((pmap_paddr_t)0xc0000000ULL)
  #define J3_RAM_SPAN_SIZE    ((uint64_t)0x80000000ULL)
  #define J3_RAM_USABLE_SIZE  ((uint64_t)0x7e800000ULL)
@@ -69,7 +69,7 @@
  #endif
  SECURITY_READ_ONLY_LATE(static ptov_table_entry)        ptov_table[PTOV_TABLE_SIZE];
  SECURITY_READ_ONLY_LATE(static boolean_t)               kva_active = FALSE;
-@@ -390,6 +384,25 @@
+@@ -390,4 +384,26 @@
  
 +/*
 + * J3XNU071: bank1 is discovered after normal VM bootstrap.  Keep it out of
@@ -96,7 +96,7 @@
  vm_map_address_t
  phystokv(pmap_paddr_t pa)
  {
-@@ -1890,23 +1903,8 @@
+@@ -1890,27 +1903,11 @@
  
  #if defined(ARM_LARGE_MEMORY)
 -#if defined(J3Y17LTE)
@@ -140,7 +140,7 @@
  #else
  #if defined(J3Y17LTE)
  	/* Preserve PA offsets across the J3 aperture; the allocator still skips the hole. */
-@@ -1710,25 +1700,8 @@
+@@ -1710,25 +1700,7 @@
  	arm_vm_page_granular_RWNX(end_kern, phystokv(args->topOfKernelData) - end_kern,
  	    ARM64_GRANULE_ALLOW_BLOCK | ARM64_GRANULE_ALLOW_HINT); /* Device Tree (if not locked down), RAM Disk (if present), bootArgs */
  
@@ -166,7 +166,7 @@
 -#endif
  
  	assert((temp_ptov_table[ptov_index - 1].va + temp_ptov_table[ptov_index - 1].len) <= physmap_end);
-@@ -2276,10 +2249,6 @@
+@@ -2276,12 +2249,5 @@
  	 */
  	sweet_early_map_final();
  #endif
@@ -179,7 +179,7 @@
 -	sweet_early_mark(366, "J3XNU067 arm_vm_physmap_init returned");
 -#endif
  	set_mmu_ttb_alternate(cpu_ttep & TTBR_BADDR_MASK);
-@@ -2304,18 +2273,8 @@
+@@ -2304,22 +2273,10 @@
  	flush_mmu_tlb();
  	sweet_early_mark(10, "TTBR0 off; TLB flushed");
  	kva_active = TRUE;
@@ -202,7 +202,7 @@
 -#endif
  
  	// From here on out, we're off the bootstrap translation tables.
-@@ -2372,21 +2331,8 @@
+@@ -2372,21 +2331,6 @@
  		flush_mmu_tlb();
  	}
  
@@ -235,7 +235,7 @@
  	disable_preemption();
 --- a/osfmk/arm/pmap/pmap.c
 +++ b/osfmk/arm/pmap/pmap.c
-@@ -2568,11 +2568,6 @@
+@@ -2568,10 +2568,5 @@
  static unsigned int avail_page_count = 0;
  static bool need_ram_ranges_init = true;
 -#if defined(J3Y17LTE)
@@ -246,7 +246,7 @@
  
  
  /**
-@@ -2600,25 +2595,12 @@
+@@ -2600,27 +2595,10 @@
  	pmap_paddr_t first = first_avail;
  	pmap_paddr_t end = avail_end;
  
@@ -274,7 +274,7 @@
  
  	need_ram_ranges_init = false;
  }
-@@ -2666,13 +2648,6 @@
+@@ -2666,14 +2648,7 @@
  	}
  
  
@@ -290,7 +290,7 @@
  		first_avail += PAGE_SIZE;
 --- a/osfmk/arm/pmap/pmap_data.c
 +++ b/osfmk/arm/pmap/pmap_data.c
-@@ -744,6 +744,13 @@
+@@ -744,5 +744,13 @@
  	/* The maximum amount of padding should be (l2_cline_bytes - 1). */
  	assert((ptd_info_offset - pt_desc_bytes) < l2_cline_bytes);
  
@@ -319,7 +319,7 @@
  	/* The pv_head_table and pp_attr_table both have one entry per VM page. */
 --- a/osfmk/mach/arm/vm_param.h
 +++ b/osfmk/mach/arm/vm_param.h
-@@ -206,8 +206,15 @@
+@@ -206,5 +206,10 @@
   */
  extern unsigned long            gVirtBase, gPhysBase, gPhysSize;
  
@@ -345,7 +345,7 @@
  #endif /* MACH_KERNEL_PRIVATE */
 --- a/osfmk/arm64/lowmem_vectors.c
 +++ b/osfmk/arm64/lowmem_vectors.c
-@@ -204,6 +204,14 @@
+@@ -204,7 +204,15 @@
  	lowGlo.lgPhysMapEnd = physmap_end;
  }
  
@@ -362,7 +362,7 @@
  {
 --- a/osfmk/vm/vm_init.c
 +++ b/osfmk/vm/vm_init.c
-@@ -72,6 +72,57 @@
+@@ -72,6 +72,59 @@
  TUNABLE(bool, iokit_iomd_setownership_enabled,
      "iokit_iomd_setownership_enabled", true);
  
