@@ -39,7 +39,7 @@
  	arm_vm_init(xmaxmem, args);
  	sweet_early_mark(15, "arm_vm_init returned");
  
-@@ -693,15 +669,8 @@
+@@ -693,16 +669,9 @@
  	}
  	sweet_early_mark(33, "dram-size found");
  
@@ -61,7 +61,7 @@
  #define J3_RAM_BANK1_END    ((pmap_paddr_t)0xc0000000ULL)
  #define J3_RAM_SPAN_SIZE    ((uint64_t)0x80000000ULL)
  #define J3_RAM_USABLE_SIZE  ((uint64_t)0x7e800000ULL)
--#define J3_RAM_TARGET_END         ((pmap_paddr_t)0xc0000000ULL)
+-#define J3_RAM_TARGET_END         ((pmap_paddr_t)0xa1800000ULL)
 -#define J3_RAM_TARGET_SPAN_SIZE   ((uint64_t)0x61800000ULL)
 -#define J3_RAM_TARGET_USABLE_SIZE ((uint64_t)0x60000000ULL)
 -#define J3_PHYSMAP_SLIDE_RANGE    (1ULL << 28)
@@ -286,7 +286,7 @@
  	max_mem = mem_size;
 -#endif
  	vm_kernel_slid_base = segLOWESTTEXT;
-@@ -2434,8 +2380,5 @@
+@@ -2434,9 +2380,6 @@
  	sweet_early_mark(12, "calling pmap_bootstrap");
  	pmap_bootstrap(dynamic_memory_begin);
  	sweet_early_mark(13, "pmap_bootstrap done");
@@ -336,7 +336,7 @@
  
  	need_ram_ranges_init = false;
  }
-@@ -2666,13 +2648,6 @@
+@@ -2666,14 +2648,7 @@
  	}
  
  
@@ -380,7 +380,7 @@
  	const uint32_t num_leaf_page_tables =
 -	    (uint32_t)(mem_size / ((PAGE_SIZE / sizeof(pt_entry_t)) * ARM_PGBYTES));
 +	    (uint32_t)(j3_pmap_metadata_span / ((PAGE_SIZE / sizeof(pt_entry_t)) * ARM_PGBYTES));
-@@ -769,5 +776,5 @@
+@@ -769,6 +776,6 @@
  
  	/* Number of VM pages that span all of kernel-managed memory. */
 -	const unsigned int npages = (unsigned int)atop(mem_size);
@@ -400,7 +400,7 @@
  /**
   * Return whether the given address represents a kernel-managed physical page.
   *
-@@ -78,18 +82,21 @@
+@@ -78,19 +82,22 @@
  static inline bool
  pa_valid(pmap_paddr_t pa)
  {
@@ -445,7 +445,7 @@
  #define isphysmem(a)            (((vm_address_t)(a) - gPhysBase) < gPhysSize)
 +#endif
  #define physmap_enclosed(a)     isphysmem(a)
-@@ -219,6 +226,12 @@
+@@ -219,7 +226,13 @@
   */
  #include <stdint.h>
  extern uint64_t                 gDramBase, gDramSize;
