@@ -118,7 +118,7 @@
  	thread_affinity_policy_data_t policy;
  
  	bzero(&policy, sizeof(policy));
-@@ -2946,4 +2960,5 @@
+@@ -2946,3 +2960,4 @@
  	return thread_policy_set(tp, THREAD_AFFINITY_POLICY,
  	           (thread_policy_t)&policy, THREAD_AFFINITY_POLICY_COUNT);
 +#endif
