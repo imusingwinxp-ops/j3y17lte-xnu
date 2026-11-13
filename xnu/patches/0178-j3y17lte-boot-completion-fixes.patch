@@ -1,0 +1,125 @@
+--- a/iokit/Kernel/arm/SweetCPU.cpp
++++ b/iokit/Kernel/arm/SweetCPU.cpp
+@@ -168,8 +168,19 @@
+ 		while (__atomic_load_n(&cpu->initialized, __ATOMIC_ACQUIRE) == 0 ||
+ 		    !sweet_cpu_signal_is_enabled(i)) {
++#if defined(J3Y17LTE)
++			/*
++			 * J3 secondaries start late.  initCPU() can publish initialized
++			 * before the secondary has completed ml_init_interrupt(), so the
++			 * one-shot self-SGI can remain unobserved.  Once initCPU has
++			 * completed, have CPU0 periodically re-issue SGI1 until the
++			 * normal XNU signal-enabled handshake is observed.  Do not relax
++			 * the handshake: make delivery reliable instead.
++			 */
++			if (__atomic_load_n(&cpu->initialized, __ATOMIC_ACQUIRE) != 0) {
++				j3y17lte_send_ipi(i);
++			}
++#endif
+ 			if (mach_absolute_time() > deadline) {
+ #if defined(J3Y17LTE)
+ 				if (i < 4) {
+@@ -210,5 +221,9 @@
+ #else
+ 				IOLog(CPU_PORT_NAME " CPU: cpu=%u mpidr=0x%x NOT alive after 5s\n",
+ 				    i, topology->cpus[i].phys_id);
+ 				panic(CPU_PORT_NAME " CPU: cpu=%u startup timeout (reset/MMU/GIC/SGI)", i);
+ #endif
+ 			}
+-			IOSleep(1);
++#if defined(J3Y17LTE)
++			IOSleep(5);
++#else
++			IOSleep(1);
++#endif
+ 		}
+--- a/pexpert/arm/pe_init.c
++++ b/pexpert/arm/pe_init.c
+@@ -308,8 +308,18 @@
+ 	while (((unsigned)(*delta + image_size)) >= (display_size / 2)) {
+-		*delta -= 50 * scale;
+-		assert(*delta >= 0);
++		int step = 50 * scale;
++#if defined(J3Y17LTE)
++		/*
++		 * The J3's 720-pixel panel can make Apple's boot-progress
++		 * centering step overshoot below zero.  Saturate at zero instead
++		 * of panicking; this preserves the progress renderer and removes
++		 * the need for -noprogress.
++		 */
++		if (*delta < step) {
++			*delta = 0;
++			break;
++		}
++#endif
++		*delta -= step;
++		assert(*delta >= 0);
+ 	}
+--- a/bsd/dev/j3y17lte_input.c
++++ b/bsd/dev/j3y17lte_input.c
+@@ -63,6 +63,7 @@
+ static bool j3_input_started;
+ static bool j3_touch_bus_ready;
+ static bool j3_touch_hw_i2c;
++static bool j3_touch_force_gpio;
+ static unsigned j3_sda_pin;
+ static unsigned j3_scl_pin;
+ static uint16_t j3_f01_ctrl;
+@@ -500,7 +501,8 @@
+ 	/* Prefer the real Samsung I2C_TSP controller. Keep the old bit-bang
+ 	 * bridge as a recovery fallback if the controller/clock is unavailable. */
+-	if (j3_hw_init() && j3_hw_probe()) {
++	if (!j3_touch_force_gpio &&
++	    j3_hw_init() && j3_hw_probe()) {
+ 		j3_touch_hw_i2c = true;
+ 		printf("J3 INPUT: TD4100 HW-I2C ACK at 0x4b\n");
+ 		return true;
+@@ -808,9 +810,21 @@
+ 				if ((setup_failures++ % 10u) == 0) {
+ 					printf("J3 INPUT: TD4100 not ready; retrying\n");
+ 				}
+-				if ((setup_failures % 3u) == 0) {
++				/*
++				 * An address ACK only proves the controller can reach the
++				 * TD4100.  If register-level RMI discovery repeatedly fails
++				 * over hardware I2C, actually exercise the already-proven
++				 * GPIO transport instead of immediately probing hardware
++				 * again and looping forever.
++				 */
++				if (j3_touch_hw_i2c && setup_failures >= 3u) {
++					printf("J3 INPUT: HW-I2C RMI setup failed; switching to GPIO transport\n");
++					j3_touch_force_gpio = true;
+ 					j3_touch_bus_ready = false;
+ 					j3_touch_hw_i2c = false;
+ 				}
+ 				j3_sleep_ms(&j3_touch_sleep_chan, 1000);
+ 				continue;
+ 			}
+--- a/bsd/net/dlil.c
++++ b/bsd/net/dlil.c
+@@ -2938,6 +2938,17 @@
+ static kern_return_t
+ dlil_affinity_set(struct thread *tp, u_int32_t tag)
+ {
++#if defined(ARM64_BOARD_CONFIG_J3Y17LTE)
++	/*
++	 * Apple's DLIL affinity tags are an optimization, not a correctness
++	 * requirement.  On the J3's non-Apple CPU topology they can strand a
++	 * newly-created legacy interface worker before its first continuation,
++	 * leaving ifnet_attach() asleep forever on if_threads_pending.
++	 *
++	 * Return "not supported" so DLIL keeps the thread normally schedulable
++	 * across the J3's single Cortex-A53 cluster.
++	 */
++	(void)tp;
++	(void)tag;
++	return KERN_NOT_SUPPORTED;
++#else
+ 	thread_affinity_policy_data_t policy;
+ 
+ 	bzero(&policy, sizeof(policy));
+@@ -2946,6 +2957,7 @@
+ 	return thread_policy_set(tp, THREAD_AFFINITY_POLICY,
+ 	           (thread_policy_t)&policy, THREAD_AFFINITY_POLICY_COUNT);
++#endif
+ }
