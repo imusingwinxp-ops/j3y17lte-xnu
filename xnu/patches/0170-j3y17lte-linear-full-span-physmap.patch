@@ -84,7 +84,7 @@
 +#endif
  
  	// From here on out, we're off the bootstrap translation tables.
-@@ -2419,2 +2431,5 @@
+@@ -2419,3 +2431,6 @@
  	pmap_bootstrap(dynamic_memory_begin);
 +#if defined(J3Y17LTE)
 +	sweet_early_mark(369, "J3XNU067 pmap_bootstrap returned");
