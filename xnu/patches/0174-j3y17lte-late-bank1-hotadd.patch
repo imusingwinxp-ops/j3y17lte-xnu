@@ -303,9 +303,9 @@
  	assert((ptd_info_offset - pt_desc_bytes) < l2_cline_bytes);
  
 +#if defined(J3Y17LTE)
-+	/* Reserve pmap metadata for bank0 + hole + the complete 1 GiB bank1.
-+	 * Initial VM ownership remains bank0-only; bank1 is hot-added later. */
-+	const vm_size_t j3_pmap_metadata_span = 0x61800000ULL;
++	/* Reserve PA-index metadata for the complete 2 GiB enclosing span.
++	 * Initial VM ownership remains loader-defined; bank1 is hot-added later. */
++	const vm_size_t j3_pmap_metadata_span = 0x80000000ULL;
 +#else
 +	const vm_size_t j3_pmap_metadata_span = mem_size;
 +#endif
