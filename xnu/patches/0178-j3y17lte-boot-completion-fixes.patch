@@ -1,6 +1,6 @@
 --- a/iokit/Kernel/arm/SweetCPU.cpp
 +++ b/iokit/Kernel/arm/SweetCPU.cpp
-@@ -168,5 +168,17 @@
+@@ -168,5 +168,18 @@
  		while (__atomic_load_n(&cpu->initialized, __ATOMIC_ACQUIRE) == 0 ||
  		    !sweet_cpu_signal_is_enabled(i)) {
 +#if defined(J3Y17LTE)
@@ -19,7 +19,7 @@
  			if (mach_absolute_time() > deadline) {
  #if defined(J3Y17LTE)
  				if (i < 4) {
-@@ -210,7 +222,11 @@
+@@ -210,8 +223,12 @@
  #else
  				IOLog(CPU_PORT_NAME " CPU: cpu=%u mpidr=0x%x NOT alive after 5s\n",
  				    i, topology->cpus[i].phys_id);
@@ -118,7 +118,7 @@
  	thread_affinity_policy_data_t policy;
  
  	bzero(&policy, sizeof(policy));
-@@ -2946,3 +2960,4 @@
+@@ -2946,4 +2960,5 @@
  	return thread_policy_set(tp, THREAD_AFFINITY_POLICY,
  	           (thread_policy_t)&policy, THREAD_AFFINITY_POLICY_COUNT);
 +#endif
