@@ -1,6 +1,6 @@
 --- a/osfmk/arm64/arm_vm_init.c
 +++ b/osfmk/arm64/arm_vm_init.c
-@@ -1873,11 +1873,18 @@
+@@ -1873,14 +1873,24 @@
  #if defined(ARM_LARGE_MEMORY)
  #if defined(J3Y17LTE)
 -	unsigned long physmap_l1_entries = ((J3_RAM_SPAN_SIZE + ARM64_PHYSMAP_SLIDE_RANGE + ARM64_PHYSMAP_ALIGNMENT_PADDING) >> ARM_TT_L1_SHIFT) + 1;
@@ -40,7 +40,7 @@
  #else
  	physmap_end = physmap_base + real_phys_size + ARM64_PHYSMAP_ALIGNMENT_PADDING;
  #endif
-@@ -2295,9 +2307,15 @@
+@@ -2295,13 +2307,16 @@
  	kva_active = TRUE;
  #if defined(J3Y17LTE)
  	sweet_early_mark(367, "J3XNU067 final TTBR active");
