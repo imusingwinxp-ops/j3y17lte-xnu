@@ -1,6 +1,6 @@
 --- a/osfmk/arm/arm_init.c
 +++ b/osfmk/arm/arm_init.c
-@@ -375,8 +375,8 @@
+@@ -375,7 +375,7 @@
  	if (const_boot_args.physBase != 0x40000000ULL) {
  		panic("J3 RAM: unexpected physBase 0x%llx", const_boot_args.physBase);
  	}
