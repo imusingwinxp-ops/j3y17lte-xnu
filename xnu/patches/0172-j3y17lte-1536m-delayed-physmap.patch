@@ -1,6 +1,6 @@
 --- a/osfmk/arm/arm_init.c
 +++ b/osfmk/arm/arm_init.c
-@@ -376,7 +376,7 @@
+@@ -376,6 +376,6 @@
  		panic("J3 RAM: unexpected physBase 0x%llx", const_boot_args.physBase);
  	}
  	const_boot_args.memSize = 0x3e800000ULL;
@@ -8,7 +8,7 @@
 +	const_boot_args.memSizeActual = 0x60000000ULL;
  #endif
  	BootArgs = args = &const_boot_args;
-@@ -665,7 +665,7 @@
+@@ -665,8 +665,8 @@
  	/* is_dram_addr() must include the upper 1 GiB bank. This value is the
  	 * enclosing physical DRAM span; pa_valid() still rejects the 24 MiB hole. */
  	gDramBase = 0x40000000ULL;
@@ -38,7 +38,7 @@
  	    AP_RWNA, ARM64_GRANULE_ALLOW_BLOCK | ARM64_GRANULE_ALLOW_HINT);
  	sweet_early_mark(365, "J3XNU067 linear full-span physmap completed");
  #else
-@@ -1875,13 +1878,12 @@
+@@ -1875,12 +1878,11 @@
  #if defined(ARM_LARGE_MEMORY)
  #if defined(J3Y17LTE)
  	/*
@@ -55,7 +55,7 @@
  #else
  	unsigned long physmap_l1_entries = ((real_phys_size + ARM64_PHYSMAP_SLIDE_RANGE + ARM64_PHYSMAP_ALIGNMENT_PADDING) >> ARM_TT_L1_SHIFT) + 1;
  #endif
-@@ -1911,12 +1913,10 @@
+@@ -1911,11 +1913,10 @@
  	static_memory_end = phystokv(args->topOfKernelData);
  #if defined(J3Y17LTE)
  	/*
@@ -70,7 +70,7 @@
  #else
  	physmap_end = physmap_base + real_phys_size + ARM64_PHYSMAP_ALIGNMENT_PADDING;
  #endif
-@@ -2271,9 +2271,25 @@
+@@ -2271,7 +2271,20 @@
  #endif
  #if defined(J3Y17LTE)
 -	/* Permit page-table construction across the complete J3 physical span. */
