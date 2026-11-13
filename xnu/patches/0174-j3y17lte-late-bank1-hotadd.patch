@@ -61,7 +61,7 @@
  #define J3_RAM_BANK1_END    ((pmap_paddr_t)0xc0000000ULL)
  #define J3_RAM_SPAN_SIZE    ((uint64_t)0x80000000ULL)
  #define J3_RAM_USABLE_SIZE  ((uint64_t)0x7e800000ULL)
--#define J3_RAM_TARGET_END         ((pmap_paddr_t)0xa1800000ULL)
+-#define J3_RAM_TARGET_END         ((pmap_paddr_t)0xc0000000ULL)
 -#define J3_RAM_TARGET_SPAN_SIZE   ((uint64_t)0x61800000ULL)
 -#define J3_RAM_TARGET_USABLE_SIZE ((uint64_t)0x60000000ULL)
 -#define J3_PHYSMAP_SLIDE_RANGE    (1ULL << 28)
@@ -290,12 +290,20 @@
  		first_avail += PAGE_SIZE;
 --- a/osfmk/arm/pmap/pmap_data.c
 +++ b/osfmk/arm/pmap/pmap_data.c
+@@ -44,6 +44,10 @@
+ 
+ #include <arm/pmap/pmap_internal.h>
+ 
++#if defined(J3Y17LTE)
++bool j3y17lte_upper_ram_online = false;
++#endif
++
 @@ -744,5 +744,13 @@
  	/* The maximum amount of padding should be (l2_cline_bytes - 1). */
  	assert((ptd_info_offset - pt_desc_bytes) < l2_cline_bytes);
  
 +#if defined(J3Y17LTE)
-+	/* Reserve pmap metadata for bank0 + hole + the first 536 MiB of bank1.
++	/* Reserve pmap metadata for bank0 + hole + the complete 1 GiB bank1.
 +	 * Initial VM ownership remains bank0-only; bank1 is hot-added later. */
 +	const vm_size_t j3_pmap_metadata_span = 0x61800000ULL;
 +#else
@@ -317,6 +325,46 @@
 +	const unsigned int npages = (unsigned int)atop(j3_pmap_metadata_span);
  
  	/* The pv_head_table and pp_attr_table both have one entry per VM page. */
+--- a/osfmk/arm/pmap/pmap_data.h
++++ b/osfmk/arm/pmap/pmap_data.h
+@@ -67,6 +67,10 @@
+  */
+ extern pmap_paddr_t vm_first_phys, vm_last_phys;
+ 
++#if defined(J3Y17LTE)
++extern bool j3y17lte_upper_ram_online;
++#endif
++
+ /**
+  * Return whether the given address represents a kernel-managed physical page.
+  *
+@@ -78,17 +82,16 @@
+ static inline bool
+ pa_valid(pmap_paddr_t pa)
+ {
+-	if (!((pa >= vm_first_phys) && (pa < vm_last_phys))) {
+-		return false;
+-	}
+ #if defined(J3Y17LTE)
+-	/* Samsung describes two J3 DRAM banks separated by a 24 MiB hole.
+-	 * Keep PA indexing over the enclosing span, but never classify the hole
+-	 * itself as kernel-managed RAM. */
+-	if (pa >= 0x7e800000ULL && pa < 0x80000000ULL) {
+-		return false;
++	/* Keep the loader-provided lower managed range exactly as booted. */
++	if ((pa >= vm_first_phys) && (pa < vm_last_phys)) {
++		return true;
+ 	}
++	/* Bank1 only becomes managed after its late direct-map is installed. */
++	return j3y17lte_upper_ram_online &&
++	    (pa >= 0x80000000ULL) && (pa < 0xc0000000ULL);
++#else
++	return (pa >= vm_first_phys) && (pa < vm_last_phys);
+ #endif
+-	return true;
+ }
+ 
+ /**
 --- a/osfmk/mach/arm/vm_param.h
 +++ b/osfmk/mach/arm/vm_param.h
 @@ -206,5 +206,10 @@
@@ -325,7 +373,7 @@
  
 +#if defined(J3Y17LTE)
 +#define isphysmem(a)            ((((vm_address_t)(a) - gPhysBase) < gPhysSize) || \
-+	(((uint64_t)(a) >= 0x80000000ULL) && ((uint64_t)(a) < 0xa1800000ULL)))
++	(((uint64_t)(a) >= 0x80000000ULL) && ((uint64_t)(a) < 0xc0000000ULL)))
 +#else
  #define isphysmem(a)            (((vm_address_t)(a) - gPhysBase) < gPhysSize)
 +#endif
@@ -337,29 +385,12 @@
 +#if defined(J3Y17LTE)
 +#define is_dram_addr(addr)      ((((uint64_t)(addr) >= 0x40000000ULL) && \
 +	((uint64_t)(addr) < 0x7e800000ULL)) || \
-+	(((uint64_t)(addr) >= 0x80000000ULL) && ((uint64_t)(addr) < 0xa1800000ULL)))
++	(((uint64_t)(addr) >= 0x80000000ULL) && ((uint64_t)(addr) < 0xc0000000ULL)))
 +#else
  #define is_dram_addr(addr)      (((uint64_t)(addr) - gDramBase) < gDramSize)
 +#endif
  
  #endif /* MACH_KERNEL_PRIVATE */
---- a/osfmk/arm64/lowmem_vectors.c
-+++ b/osfmk/arm64/lowmem_vectors.c
-@@ -204,7 +204,15 @@
- 	lowGlo.lgPhysMapEnd = physmap_end;
- }
- 
-+#if defined(J3Y17LTE)
-+void
-+j3y17lte_patch_low_glo_hotadd(uint64_t end)
-+{
-+	lowGlo.lgVmLastPhys = end;
-+}
-+#endif
-+
- void
- patch_low_glo_vm_page_info(void * start_addr, void * end_addr, uint32_t first_ppnum)
- {
 --- a/osfmk/vm/vm_init.c
 +++ b/osfmk/vm/vm_init.c
 @@ -72,6 +72,59 @@
@@ -371,7 +402,7 @@
 +#include <arm/pmap/pmap_data.h>
 +
 +#define J3_BANK1_HOTADD_START ((pmap_paddr_t)0x80000000ULL)
-+#define J3_BANK1_HOTADD_END   ((pmap_paddr_t)0xa1800000ULL)
++#define J3_BANK1_HOTADD_END   ((pmap_paddr_t)0xc0000000ULL)
 +#define J3_BANK1_HOTADD_SIZE  ((vm_size_t)(J3_BANK1_HOTADD_END - J3_BANK1_HOTADD_START))
 +
 +extern vm_offset_t mem_size;
@@ -380,7 +411,7 @@
 +extern uint64_t max_mem_actual;
 +extern uint64_t sane_size;
 +extern void j3y17lte_register_hotadd_ptov(vm_map_address_t va, pmap_paddr_t pa, vm_size_t len);
-+extern void j3y17lte_patch_low_glo_hotadd(uint64_t end);
++extern bool j3y17lte_upper_ram_online;
 +
 +static void
 +j3y17lte_hotadd_bank1(void)
@@ -388,16 +419,15 @@
 +	vm_offset_t va = 0;
 +
 +	/*
-+	 * Reserve VA only: do not consume bank0 pages for the 536 MiB aperture.
-+	 * Pmap metadata was pre-sized during pmap_data_bootstrap(), so extending
-+	 * vm_last_phys before pmap_map() makes bank1 managed without touching the
-+	 * nonexistent 24 MiB hole.
++	 * Reserve VA only: do not consume lower-bank pages for the 1 GiB aperture.
++	 * Bank1 deliberately remains unmanaged while pmap_map() creates this
++	 * translation. Only after the mapping and PTOV entry are live do we expose
++	 * bank1 to pa_valid() and vm_page_create().
 +	 */
 +	kmem_alloc(kernel_map, &va, J3_BANK1_HOTADD_SIZE,
 +	    KMA_PERMANENT | KMA_NOFAIL | KMA_KOBJECT | KMA_VAONLY,
 +	    VM_KERN_MEMORY_OSFMK);
 +
-+	vm_last_phys = J3_BANK1_HOTADD_END;
 +	vm_map_address_t mapped_end = pmap_map(va,
 +	    J3_BANK1_HOTADD_START, J3_BANK1_HOTADD_END,
 +	    VM_PROT_READ | VM_PROT_WRITE, VM_WIMG_USE_DEFAULT);
@@ -406,15 +436,19 @@
 +	}
 +
 +	j3y17lte_register_hotadd_ptov(va, J3_BANK1_HOTADD_START, J3_BANK1_HOTADD_SIZE);
-+	j3y17lte_patch_low_glo_hotadd(J3_BANK1_HOTADD_END);
++	j3y17lte_upper_ram_online = true;
 +
 +	vm_page_create((ppnum_t)atop_64(J3_BANK1_HOTADD_START),
 +	    (ppnum_t)atop_64(J3_BANK1_HOTADD_END));
 +
-+	mem_size = 0x60000000ULL;
-+	mem_actual = 0x60000000ULL;
-+	max_mem = 0x60000000ULL;
-+	max_mem_actual = 0x60000000ULL;
++	mem_size += J3_BANK1_HOTADD_SIZE;
++	max_mem += J3_BANK1_HOTADD_SIZE;
++	if (mem_actual < max_mem) {
++		mem_actual = max_mem;
++	}
++	if (max_mem_actual < max_mem) {
++		max_mem_actual = max_mem;
++	}
 +	sane_size += J3_BANK1_HOTADD_SIZE;
 +}
 +#endif
