@@ -8,7 +8,7 @@
 +	const_boot_args.memSizeActual = 0x60000000ULL;
  #endif
  	BootArgs = args = &const_boot_args;
-@@ -665,8 +665,8 @@
+@@ -665,7 +665,7 @@
  	/* is_dram_addr() must include the upper 1 GiB bank. This value is the
  	 * enclosing physical DRAM span; pa_valid() still rejects the 24 MiB hole. */
  	gDramBase = 0x40000000ULL;
