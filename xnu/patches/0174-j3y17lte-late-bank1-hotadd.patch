@@ -377,17 +377,18 @@
  	/* The pv_head_table and pp_attr_table both have one entry per VM page. */
 --- a/osfmk/arm/pmap/pmap_data.h
 +++ b/osfmk/arm/pmap/pmap_data.h
-@@ -62,6 +62,9 @@
+@@ -62,6 +62,10 @@
   */
  extern pmap_paddr_t vm_first_phys, vm_last_phys;
  
 +#if defined(J3Y17LTE)
++extern bool j3y17lte_upper_ram_online;
 +#endif
 +
  /**
   * Return whether the given address represents a kernel-managed physical page.
   *
-@@ -74,18 +77,21 @@
+@@ -74,18 +78,21 @@
  static inline bool
  pa_valid(pmap_paddr_t pa)
  {
@@ -447,7 +448,7 @@
  #endif /* MACH_KERNEL_PRIVATE */
 --- a/osfmk/vm/vm_init.c
 +++ b/osfmk/vm/vm_init.c
-@@ -87,6 +87,65 @@
+@@ -87,6 +87,64 @@
  TUNABLE(bool, iokit_iomd_setownership_enabled,
      "iokit_iomd_setownership_enabled", true);
  
@@ -467,7 +468,6 @@
 +extern uint64_t max_mem_actual;
 +extern uint64_t sane_size;
 +extern vm_map_address_t j3y17lte_bank1_direct_base;
-+extern bool j3y17lte_upper_ram_online;
 +
 +static void
 +j3y17lte_hotadd_bank1(void)
@@ -513,7 +513,7 @@
  static inline void
  vm_mem_bootstrap_log(const char *message)
  {
-@@ -137,6 +196,11 @@
+@@ -137,6 +195,11 @@
  
  	kernel_startup_initialize_upto(STARTUP_SUB_ZALLOC);
  
