@@ -400,7 +400,7 @@
  /**
   * Return whether the given address represents a kernel-managed physical page.
   *
-@@ -78,18 +82,17 @@
+@@ -78,18 +82,21 @@
  static inline bool
  pa_valid(pmap_paddr_t pa)
  {
@@ -413,6 +413,10 @@
 -	 * itself as kernel-managed RAM. */
 -	if (pa >= 0x7e800000ULL && pa < 0x80000000ULL) {
 -		return false;
++	/* The Samsung hole is never RAM, regardless of what the loader reports. */
++	if (pa >= 0x7e800000ULL && pa < 0x80000000ULL) {
++		return false;
++	}
 +	/* Keep the loader-provided lower managed range exactly as booted. */
 +	if ((pa >= vm_first_phys) && (pa < vm_last_phys)) {
 +		return true;
@@ -429,12 +433,13 @@
  /**
 --- a/osfmk/mach/arm/vm_param.h
 +++ b/osfmk/mach/arm/vm_param.h
-@@ -206,5 +206,10 @@
+@@ -206,5 +206,11 @@
   */
  extern unsigned long            gVirtBase, gPhysBase, gPhysSize;
  
 +#if defined(J3Y17LTE)
-+#define isphysmem(a)            ((((vm_address_t)(a) - gPhysBase) < gPhysSize) || \
++#define isphysmem(a)            (((((vm_address_t)(a) - gPhysBase) < gPhysSize) && \
++	!(((uint64_t)(a) >= 0x7e800000ULL) && ((uint64_t)(a) < 0x80000000ULL))) || \
 +	(((uint64_t)(a) >= 0x80000000ULL) && ((uint64_t)(a) < 0xc0000000ULL)))
 +#else
  #define isphysmem(a)            (((vm_address_t)(a) - gPhysBase) < gPhysSize)
