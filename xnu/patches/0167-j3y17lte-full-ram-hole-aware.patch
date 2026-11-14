@@ -1,0 +1,187 @@
+--- a/osfmk/arm/arm_init.c
++++ b/osfmk/arm/arm_init.c
+@@ -350,3 +352,21 @@
+ 	/* If kernel integrity is supported, use a constant copy of the boot args. */
+ 	const_boot_args = *args;
++#if defined(J3Y17LTE)
++	/*
++	 * Exynos7570 J3Y17LTE DRAM topology:
++	 *   0x40000000..0x7e800000  1000 MiB RAM
++	 *   0x7e800000..0x80000000    24 MiB hole
++	 *   0x80000000..0xc0000000  1024 MiB RAM
++	 *
++	 * BootArgs has only one base/size span, so advertise the full 2 GiB
++	 * physical aperture and record the actual usable 2024 MiB separately.
++	 * The J3 pmap changes below reject/skip the 24 MiB hole. Do this on
++	 * XNU's private BootArgs copy, before the >1 GiB page-size decision.
++	 */
++	if (const_boot_args.physBase != 0x40000000ULL) {
++		panic("J3 RAM: unexpected physBase 0x%llx", const_boot_args.physBase);
++	}
++	const_boot_args.memSize = 0x80000000ULL;
++	const_boot_args.memSizeActual = 0x7e800000ULL;
++#endif
+ 	BootArgs = args = &const_boot_args;
+@@ -603,7 +621,13 @@
+ 	sweet_early_mark(7, "entering arm_vm_init");
+ #if defined(J3Y17LTE)
+ 	J3_EARLY_MARK(0x67146460UL, 0xffffffffU); /* stage 22 */
+ #undef J3_EARLY_MARK
+ #endif
++#if defined(J3Y17LTE)
++	/* Ignore donor hw.memsize unless maxmem= was explicitly requested. */
++	if (!PE_parse_boot_argn("maxmem", &maxmem, sizeof(maxmem))) {
++		xmaxmem = 0;
++	}
++#endif
+ 	arm_vm_init(xmaxmem, args);
+ 	sweet_early_mark(15, "arm_vm_init returned");
+@@ -397,20 +415,29 @@
+ 	{
+ 		/*
+ 		 * Select the advertised kernel page size.
+ 		 */
++#if defined(J3Y17LTE)
++		/*
++		 * Exynos7570/J3 is a 4 KiB-page port.  Advertising the full 2 GiB
++		 * physical aperture must not make stock XNU switch the software VM
++		 * page size to 16 KiB merely because memSize is now >1 GiB.
++		 */
++		PAGE_SHIFT_CONST = ARM_PGSHIFT;
++#else
+ 		if (args->memSize > 1ULL * 1024 * 1024 * 1024) {
+ 			/*
+ 			 * arm64 device with > 1GB of RAM:
+ 			 * kernel uses 16KB pages.
+ 			 */
+ 			PAGE_SHIFT_CONST = PAGE_MAX_SHIFT;
+ 		} else {
+ 			/*
+ 			 * arm64 device with <= 1GB of RAM:
+ 			 * kernel uses hardware page size
+ 			 * (4KB for H6/H7, 16KB for H8+).
+ 			 */
+ 			PAGE_SHIFT_CONST = ARM_PGSHIFT;
+ 		}
++#endif
+ 
+ 		/* 32-bit apps always see 16KB page size */
+@@ -632,5 +659,12 @@
+ 	sweet_early_mark(33, "dram-size found");
+ 
++#if defined(J3Y17LTE)
++	/* is_dram_addr() must include the upper 1 GiB bank. This value is the
++	 * enclosing physical DRAM span; pa_valid() still rejects the 24 MiB hole. */
++	gDramBase = 0x40000000ULL;
++	gDramSize = 0x80000000ULL;
++#else
+ 	gDramBase = *dram_base;
+ 	gDramSize = *dram_size;
++#endif
+ 	sweet_early_mark(34, "DRAM globals installed");
+--- a/osfmk/arm64/arm_vm_init.c
++++ b/osfmk/arm64/arm_vm_init.c
+@@ -2203,5 +2203,20 @@
+-	sane_size = mem_size - (avail_start - gPhysBase);
+-	max_mem = mem_size;
++#if defined(J3Y17LTE)
++	/*
++	 * mem_size is deliberately the full 2 GiB physical index span so the
++	 * physmap and per-PA pmap metadata can address the upper bank. Do not
++	 * count the 24 MiB non-RAM hole as usable memory in VM accounting.
++	 */
++	const uint64_t j3_ram_hole_size = 0x01800000ULL;
++	if (avail_start >= 0x7e800000ULL) {
++		panic("J3 RAM: bootstrap allocations reached DRAM hole (0x%llx)", avail_start);
++	}
++	assert(mem_size >= j3_ram_hole_size);
++	sane_size = mem_size - (avail_start - gPhysBase) - j3_ram_hole_size;
++	max_mem = mem_size - j3_ram_hole_size;
++#else
++	sane_size = mem_size - (avail_start - gPhysBase);
++	max_mem = mem_size;
++#endif
+ 	vm_kernel_slid_base = segLOWESTTEXT;
+ 	// vm_kernel_slide is set by arm_init()->arm_slide_rebase_and_sign_image()
+ 	vm_kernel_stext = segTEXTB;
+--- a/osfmk/arm/pmap/pmap.c
++++ b/osfmk/arm/pmap/pmap.c
+@@ -2566,7 +2566,12 @@
+  */
+ 
+ static unsigned int avail_page_count = 0;
+ static bool need_ram_ranges_init = true;
++#if defined(J3Y17LTE)
++#define J3_RAM_HOLE_START ((pmap_paddr_t)0x7e800000ULL)
++#define J3_RAM_HOLE_END   ((pmap_paddr_t)0x80000000ULL)
++#define J3_RAM_HOLE_SIZE  (J3_RAM_HOLE_END - J3_RAM_HOLE_START)
++#endif
+ 
+ 
+ /**
+@@ -2593,12 +2598,29 @@
+ initialize_ram_ranges(void)
+ {
+ 	pmap_paddr_t first = first_avail;
+ 	pmap_paddr_t end = avail_end;
+ 
++#if defined(J3Y17LTE)
++	/* Normalize a bootstrap cursor that somehow landed inside the J3 hole. */
++	if (first >= J3_RAM_HOLE_START && first < J3_RAM_HOLE_END) {
++		first = J3_RAM_HOLE_END;
++		first_avail = first;
++	}
++#endif
++
+ 	assert(first <= end);
+ 	assert(first == (first & ~PAGE_MASK));
+ 	assert(end == (end & ~PAGE_MASK));
+ 	avail_page_count = atop(end - first);
++#if defined(J3Y17LTE)
++	/* The metadata index space intentionally spans the hole, but the early
++	 * physical-page allocator must never hand those nonexistent pages to VM. */
++	pmap_paddr_t hole_first = MAX(first, J3_RAM_HOLE_START);
++	pmap_paddr_t hole_last = MIN(end, J3_RAM_HOLE_END);
++	if (hole_first < hole_last) {
++		avail_page_count -= atop(hole_last - hole_first);
++	}
++#endif
+ 
+ 	need_ram_ranges_init = false;
+ }
+@@ -2642,6 +2664,13 @@
+ 	}
+ 
+ 
++#if defined(J3Y17LTE)
++	if (first_avail >= J3_RAM_HOLE_START &&
++	    first_avail < J3_RAM_HOLE_END) {
++		first_avail = J3_RAM_HOLE_END;
++	}
++#endif
++
+ 	if (first_avail != avail_end) {
+ 		*pnum = (ppnum_t)atop(first_avail);
+ 		first_avail += PAGE_SIZE;
+--- a/osfmk/arm/pmap/pmap_data.h
++++ b/osfmk/arm/pmap/pmap_data.h
+@@ -74,7 +74,18 @@
+ static inline bool
+ pa_valid(pmap_paddr_t pa)
+ {
+-	return (pa >= vm_first_phys) && (pa < vm_last_phys);
++	if (!((pa >= vm_first_phys) && (pa < vm_last_phys))) {
++		return false;
++	}
++#if defined(J3Y17LTE)
++	/* Samsung describes two J3 DRAM banks separated by a 24 MiB hole.
++	 * Keep PA indexing over the enclosing span, but never classify the hole
++	 * itself as kernel-managed RAM. */
++	if (pa >= 0x7e800000ULL && pa < 0x80000000ULL) {
++		return false;
++	}
++#endif
++	return true;
+ }
+ 
+ /**
