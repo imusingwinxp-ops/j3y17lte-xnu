@@ -1,6 +1,6 @@
 --- a/bsd/dev/j3y17lte_input.c
 +++ b/bsd/dev/j3y17lte_input.c
-@@ -828,7 +828,11 @@
+@@ -828,6 +828,10 @@
  	int enabled = 1;
  	int keys_enabled = 1;
 -	int touch_enabled = 1;
@@ -14,7 +14,7 @@
  	if (j3_input_started) {
 --- a/osfmk/vm/vm_init.c
 +++ b/osfmk/vm/vm_init.c
-@@ -171,6 +171,10 @@
+@@ -171,4 +171,7 @@
  		max_mem_actual = max_mem;
  	}
  	sane_size += hotadd_size;
