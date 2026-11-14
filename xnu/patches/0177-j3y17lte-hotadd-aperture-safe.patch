@@ -1,0 +1,259 @@
+--- a/osfmk/arm/pmap/pmap.c
++++ b/osfmk/arm/pmap/pmap.c
+@@ -1882,6 +1882,72 @@
+ 	return virt;
+ }
+ 
++#if defined(J3Y17LTE)
++/*
++ * J3XNU074: install the late bank1 direct-map like a physmap/backdoor
++ * mapping. pmap_map() is deliberately not used here: it routes the target
++ * PAs through pmap_enter() and PV bookkeeping. A permanent physical aperture
++ * alias must not be represented as a normal tracked mapping.
++ *
++ * The VA was reserved with KMA_VAONLY. Expand kernel page tables lazily as
++ * required, then write normal cacheable RAM PTEs directly.
++ */
++vm_map_address_t
++j3y17lte_pmap_map_ram_bd(
++	vm_map_address_t virt,
++	vm_offset_t start,
++	vm_offset_t end,
++	vm_prot_t prot)
++{
++	const pt_attr_t * const pt_attr = pmap_get_pt_attr(kernel_pmap);
++	vm_map_address_t vaddr = virt;
++	vm_offset_t paddr = start;
++
++	while (paddr < end) {
++		pt_entry_t *ptep = pmap_pte(kernel_pmap, vaddr);
++		if (ptep == PT_ENTRY_NULL) {
++			kern_return_t kr;
++			do {
++				kr = pmap_expand(kernel_pmap, vaddr, 0,
++				    pt_attr_leaf_level(pt_attr));
++			} while (kr == KERN_ABORTED);
++			if (kr != KERN_SUCCESS) {
++				panic("J3 HOTADD: pmap_expand failed kr=%d va=%p",
++				    kr, (void *)vaddr);
++			}
++			ptep = pmap_pte(kernel_pmap, vaddr);
++			if (ptep == PT_ENTRY_NULL) {
++				panic("J3 HOTADD: no PTE after expand va=%p",
++				    (void *)vaddr);
++			}
++		}
++
++		if (*ptep != ARM_PTE_TYPE_FAULT) {
++			panic("J3 HOTADD: direct-map VA already populated va=%p pte=0x%llx",
++			    (void *)vaddr, (uint64_t)*ptep);
++		}
++
++		pt_entry_t pte = pa_to_pte(paddr) |
++		    ARM_PTE_TYPE | ARM_PTE_AF | ARM_PTE_NX | ARM_PTE_PNX |
++		    ARM_PTE_AP((prot & VM_PROT_WRITE) ? AP_RWNA : AP_RONA) |
++		    ARM_PTE_ATTRINDX(CACHE_ATTRINDX_DEFAULT) |
++		    ARM_PTE_SH(SH_OUTER_MEMORY);
++#if __ARM_KERNEL_PROTECT__
++		pte |= ARM_PTE_NG;
++#endif
++		write_pte_strong(ptep, pte);
++
++		vaddr += PAGE_SIZE;
++		paddr += PAGE_SIZE;
++	}
++
++	if (end > start) {
++		flush_mmu_tlb_region(virt, (unsigned)(end - start));
++	}
++	return vaddr;
++}
++#endif
++
+ vm_map_address_t
+ pmap_map_bd_with_options(
+ 	vm_map_address_t virt,
+@@ -2568,5 +2628,9 @@
+ static unsigned int avail_page_count = 0;
+ static bool need_ram_ranges_init = true;
++#if defined(J3Y17LTE)
++#define J3_RAM_HOLE_START ((pmap_paddr_t)0x7e800000ULL)
++#define J3_RAM_HOLE_END   ((pmap_paddr_t)0x80000000ULL)
++#endif
+ 
+ 
+ /**
+@@ -2594,10 +2658,25 @@
+ 	pmap_paddr_t first = first_avail;
+ 	pmap_paddr_t end = avail_end;
+ 
++#if defined(J3Y17LTE)
++	/* Never publish Samsung's 24 MiB non-RAM gap to the VM free lists. */
++	if (first >= J3_RAM_HOLE_START && first < J3_RAM_HOLE_END) {
++		first = MIN(end, J3_RAM_HOLE_END);
++		first_avail = first;
++	}
++#endif
++
+ 	assert(first <= end);
+ 	assert(first == (first & ~PAGE_MASK));
+ 	assert(end == (end & ~PAGE_MASK));
+ 	avail_page_count = atop(end - first);
++#if defined(J3Y17LTE)
++	pmap_paddr_t hole_first = MAX(first, J3_RAM_HOLE_START);
++	pmap_paddr_t hole_last = MIN(end, J3_RAM_HOLE_END);
++	if (hole_first < hole_last) {
++		avail_page_count -= atop(hole_last - hole_first);
++	}
++#endif
+ 
+ 	need_ram_ranges_init = false;
+ }
+@@ -2641,6 +2720,12 @@
+ 		initialize_ram_ranges();
+ 	}
+ 
++#if defined(J3Y17LTE)
++	if (first_avail >= J3_RAM_HOLE_START &&
++	    first_avail < J3_RAM_HOLE_END) {
++		first_avail = MIN(avail_end, J3_RAM_HOLE_END);
++	}
++#endif
+ 
+ 	if (first_avail != avail_end) {
+ 		*pnum = (ppnum_t)atop(first_avail);
+@@ -7436,6 +7521,12 @@
+ boolean_t
+ pmap_has_managed_page(ppnum_t first, ppnum_t last)
+ {
++#if defined(J3Y17LTE)
++	if (j3y17lte_upper_ram_online &&
++	    ptoa(last) >= 0x80000000ULL && ptoa(first) < 0xc0000000ULL) {
++		return TRUE;
++	}
++#endif
+ 	if (ptoa(first) >= vm_last_phys) {
+ 		return FALSE;
+ 	}
+--- a/osfmk/arm/pmap/pmap_data.h
++++ b/osfmk/arm/pmap/pmap_data.h
+@@ -82,21 +82,22 @@
+ pa_valid(pmap_paddr_t pa)
+ {
+ #if defined(J3Y17LTE)
+-	/*
+-	 * J3XNU073: bank1 is a late-hot-added range.  Test it before the
+-	 * loader-provided vm_first_phys..vm_last_phys span so a broad loader
+-	 * range cannot accidentally make bank1 PV-managed before its direct-map
+-	 * exists.
+-	 */
+-	if (pa >= 0x80000000ULL && pa < 0xc0000000ULL) {
+-		return j3y17lte_upper_ram_online;
+-	}
+ 	/* The Samsung hole is never RAM, regardless of what the loader reports. */
+ 	if (pa >= 0x7e800000ULL && pa < 0x80000000ULL) {
+ 		return false;
+ 	}
+-	/* Keep the loader-provided lower managed range exactly as booted. */
+-	return (pa >= vm_first_phys) && (pa < vm_last_phys);
++	/*
++	 * J3XNU074: keep every page the loader already gave VM managed. In
++	 * particular, pmap_expand() may allocate page-table pages from that set
++	 * while building the late bank1 aperture; rejecting such a page makes
++	 * kvtophys_nofail() panic before the aperture can be completed.
++	 */
++	if ((pa >= vm_first_phys) && (pa < vm_last_phys)) {
++		return true;
++	}
++	/* Only the not-already-managed bank1 tail is published by the hot-add. */
++	return j3y17lte_upper_ram_online &&
++	    (pa >= 0x80000000ULL) && (pa < 0xc0000000ULL);
+ #else
+ 	return (pa >= vm_first_phys) && (pa < vm_last_phys);
+ #endif
+--- a/osfmk/vm/vm_init.c
++++ b/osfmk/vm/vm_init.c
+@@ -99,17 +99,20 @@
+ extern uint64_t max_mem_actual;
+ extern uint64_t sane_size;
+ extern vm_map_address_t j3y17lte_bank1_direct_base;
++extern vm_map_address_t j3y17lte_pmap_map_ram_bd(
++	vm_map_address_t virt, vm_offset_t start, vm_offset_t end,
++	vm_prot_t prot);
+ 
+ static void
+ j3y17lte_hotadd_bank1(void)
+ {
+ 	vm_offset_t va = 0;
++	pmap_paddr_t hotadd_start = J3_BANK1_HOTADD_START;
+ 
+ 	/*
+ 	 * Reserve VA only: do not consume lower-bank pages for the 1 GiB aperture.
+-	 * Bank1 deliberately remains unmanaged while pmap_map() creates this
+-	 * translation. Only after the mapping and PTOV entry are live do we expose
+-	 * bank1 to pa_valid() and vm_page_create().
++	 * J3XNU074 maps the aperture as a permanent physmap-style alias instead of
++	 * routing each target PA through pmap_enter()/PV bookkeeping.
+ 	 */
+ 	kprintf("J3 HOTADD: reserve 1GiB DATA VA begin\n");
+ 	kern_return_t kr = kmem_alloc(kernel_map, &va, J3_BANK1_HOTADD_SIZE,
+@@ -120,31 +123,48 @@
+ 	}
+ 	kprintf("J3 HOTADD: reserve VA ok %p\n", (void *)va);
+ 
+-	kprintf("J3 HOTADD: pmap bank1 begin\n");
+-	vm_map_address_t mapped_end = pmap_map(va,
++	kprintf("J3 HOTADD: direct-map bank1 begin\n");
++	vm_map_address_t mapped_end = j3y17lte_pmap_map_ram_bd(va,
+ 	    J3_BANK1_HOTADD_START, J3_BANK1_HOTADD_END,
+-	    VM_PROT_READ | VM_PROT_WRITE, VM_WIMG_USE_DEFAULT);
++	    VM_PROT_READ | VM_PROT_WRITE);
+ 	if (mapped_end != va + J3_BANK1_HOTADD_SIZE) {
+-		panic("J3 HOTADD: bank1 pmap incomplete");
++		panic("J3 HOTADD: bank1 direct-map incomplete");
+ 	}
+-	kprintf("J3 HOTADD: pmap bank1 ok\n");
++	kprintf("J3 HOTADD: direct-map bank1 ok\n");
+ 
+-	/* Install the direct-map translation before bank1 becomes managed RAM. */
++	/*
++	 * vm_last_phys is the loader-managed end captured by pmap_bootstrap().
++	 * Never feed pages already owned by VM to vm_page_create() a second time.
++	 */
++	if (vm_last_phys > hotadd_start) {
++		hotadd_start = vm_last_phys;
++		if (hotadd_start > J3_BANK1_HOTADD_END) {
++			hotadd_start = J3_BANK1_HOTADD_END;
++		}
++	}
++	const vm_size_t hotadd_size = J3_BANK1_HOTADD_END - hotadd_start;
++	kprintf("J3 HOTADD: loader end=0x%llx add=[0x%llx,0x%llx) size=0x%llx\n",
++	    (uint64_t)vm_last_phys, (uint64_t)hotadd_start,
++	    (uint64_t)J3_BANK1_HOTADD_END, (uint64_t)hotadd_size);
++
++	/* Publish the permanent alias before advertising any new managed pages. */
+ 	j3y17lte_bank1_direct_base = va;
+ 	j3y17lte_upper_ram_online = true;
+ 	kprintf("J3 HOTADD: bank1 pa_valid online\n");
+ 
+-	vm_page_create((ppnum_t)atop_64(J3_BANK1_HOTADD_START),
+-	    (ppnum_t)atop_64(J3_BANK1_HOTADD_END));
++	if (hotadd_size != 0) {
++		vm_page_create((ppnum_t)atop_64(hotadd_start),
++		    (ppnum_t)atop_64(J3_BANK1_HOTADD_END));
++	}
+ 	kprintf("J3 HOTADD: vm_page_create bank1 done\n");
+ 
+-	mem_size += J3_BANK1_HOTADD_SIZE;
+-	max_mem += J3_BANK1_HOTADD_SIZE;
++	mem_size += hotadd_size;
++	max_mem += hotadd_size;
+ 	if (mem_actual < max_mem) {
+ 		mem_actual = max_mem;
+ 	}
+ 	if (max_mem_actual < max_mem) {
+ 		max_mem_actual = max_mem;
+ 	}
+-	sane_size += J3_BANK1_HOTADD_SIZE;
++	sane_size += hotadd_size;
+ }
