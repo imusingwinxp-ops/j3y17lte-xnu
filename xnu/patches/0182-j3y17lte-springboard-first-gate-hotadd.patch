@@ -8,7 +8,7 @@
  
  extern vm_offset_t mem_size;
  extern uint64_t mem_actual;
-@@ -195,8 +196,13 @@
+@@ -195,7 +196,11 @@
  
  #if defined(J3Y17LTE)
 -	vm_mem_bootstrap_log("J3XNU071 hot-add bank1");
