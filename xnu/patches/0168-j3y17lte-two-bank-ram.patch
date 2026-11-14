@@ -1,0 +1,99 @@
+--- a/osfmk/arm/arm_init.c
++++ b/osfmk/arm/arm_init.c
+@@ -365,11 +365,12 @@
+-	 * BootArgs has only one base/size span, so advertise the full 2 GiB
+-	 * physical aperture and record the actual usable 2024 MiB separately.
+-	 * The J3 pmap changes below reject/skip the 24 MiB hole. Do this on
+-	 * XNU's private BootArgs copy, before the >1 GiB page-size decision.
++	 * BootArgs can only describe one contiguous range. Keep bootstrap/XNU's
++	 * early linear assumptions confined to the real 1000 MiB lower bank.
++	 * The upper 1 GiB bank is added later as a separate physical-aperture
++	 * segment once the final kernel page tables exist. memSizeActual still
++	 * records the full 2024 MiB of real DRAM.
+ 	 */
+ 	if (const_boot_args.physBase != 0x40000000ULL) {
+ 		panic("J3 RAM: unexpected physBase 0x%llx", const_boot_args.physBase);
+ 	}
+-	const_boot_args.memSize = 0x80000000ULL;
++	const_boot_args.memSize = 0x3e800000ULL;
+ 	const_boot_args.memSizeActual = 0x7e800000ULL;
+ #endif
+--- a/osfmk/arm64/arm_vm_init.c
++++ b/osfmk/arm64/arm_vm_init.c
+@@ -370,3 +370,10 @@
+ #define PTOV_TABLE_SIZE 8
++#if defined(J3Y17LTE)
++#define J3_RAM_BANK0_END    ((pmap_paddr_t)0x7e800000ULL)
++#define J3_RAM_BANK1_START  ((pmap_paddr_t)0x80000000ULL)
++#define J3_RAM_BANK1_END    ((pmap_paddr_t)0xc0000000ULL)
++#define J3_RAM_SPAN_SIZE    ((uint64_t)0x80000000ULL)
++#define J3_RAM_USABLE_SIZE  ((uint64_t)0x7e800000ULL)
++#endif
+ SECURITY_READ_ONLY_LATE(static ptov_table_entry)        ptov_table[PTOV_TABLE_SIZE];
+ SECURITY_READ_ONLY_LATE(static boolean_t)               kva_active = FALSE;
+@@ -1684,8 +1691,24 @@
+ 	arm_vm_page_granular_RWNX(end_kern, phystokv(args->topOfKernelData) - end_kern,
+ 	    ARM64_GRANULE_ALLOW_BLOCK | ARM64_GRANULE_ALLOW_HINT); /* Device Tree (if not locked down), RAM Disk (if present), bootArgs */
+ 
++#if defined(J3Y17LTE)
++	if (args->topOfKernelData >= J3_RAM_BANK0_END) {
++		panic("J3 RAM: topOfKernelData outside bank0 (0x%llx)", args->topOfKernelData);
++	}
++	/* Finish bank0, then create an independent aperture segment for bank1.
++	 * No mapping is created for 0x7e800000..0x80000000. */
++	arm_vm_physmap_slide(temp_ptov_table,
++	    (args->topOfKernelData - gPhysBase + gVirtBase),
++	    J3_RAM_BANK0_END - args->topOfKernelData,
++	    AP_RWNA, ARM64_GRANULE_ALLOW_BLOCK | ARM64_GRANULE_ALLOW_HINT);
++	arm_vm_physmap_slide(temp_ptov_table,
++	    gVirtBase + (J3_RAM_BANK1_START - gPhysBase),
++	    J3_RAM_BANK1_END - J3_RAM_BANK1_START,
++	    AP_RWNA, ARM64_GRANULE_ALLOW_BLOCK | ARM64_GRANULE_ALLOW_HINT);
++#else
+ 	arm_vm_physmap_slide(temp_ptov_table, (args->topOfKernelData - gPhysBase + gVirtBase),
+ 	    real_avail_end - args->topOfKernelData, AP_RWNA, ARM64_GRANULE_ALLOW_BLOCK | ARM64_GRANULE_ALLOW_HINT); // rest of physmem
++#endif
+ 
+ 	assert((temp_ptov_table[ptov_index - 1].va + temp_ptov_table[ptov_index - 1].len) <= physmap_end);
+ 
+@@ -1952,8 +1975,14 @@
+ 	static_memory_end = phystokv(args->topOfKernelData);
+ 	physmap_end = physmap_base + real_phys_size + ARM64_PHYSMAP_ALIGNMENT_PADDING;
+ #else
++#if defined(J3Y17LTE)
++	/* The final J3 physmap packs bank0 + bank1 and deliberately omits the hole. */
++	static_memory_end = physmap_base + J3_RAM_USABLE_SIZE + ARM64_PHYSMAP_ALIGNMENT_PADDING;
++	physmap_end = physmap_base + J3_RAM_USABLE_SIZE + ARM64_PHYSMAP_ALIGNMENT_PADDING;
++#else
+ 	static_memory_end = physmap_base + mem_size + ARM64_PHYSMAP_ALIGNMENT_PADDING; // worst possible case for block alignment
+ 	physmap_end = physmap_base + real_phys_size + ARM64_PHYSMAP_ALIGNMENT_PADDING;
++#endif
+ #endif // ARM_LARGE_MEMORY
+ #endif
+ 
+@@ -2232,6 +2261,10 @@
+ 	 */
+ 	sweet_early_map_final();
+ #endif
++#if defined(J3Y17LTE)
++	/* Permit page-table construction for the separately mapped upper bank. */
++	real_avail_end = J3_RAM_BANK1_END;
++#endif
+ 	arm_vm_physmap_init(args);
+ 	set_mmu_ttb_alternate(cpu_ttep & TTBR_BADDR_MASK);
+ 
+@@ -2250,6 +2283,14 @@
+ 	flush_mmu_tlb();
+ 	sweet_early_mark(10, "TTBR0 off; TLB flushed");
+ 	kva_active = TRUE;
++#if defined(J3Y17LTE)
++	/* From this point phystokv() can reach bank1 through ptov_table.
++	 * Expand the pmap index space only now, after bootstrap linear mappings
++	 * are no longer responsible for describing physical RAM. */
++	mem_size = J3_RAM_SPAN_SIZE;
++	avail_end = J3_RAM_BANK1_END;
++#endif
++
+ 	// global table pointers may need to be different due to physical aperture remapping
+ 	cpu_tte = (tt_entry_t*)(phystokv(cpu_ttep));
+ 	invalid_tte = (tt_entry_t*)(phystokv(invalid_ttep));
