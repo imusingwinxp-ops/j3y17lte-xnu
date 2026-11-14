@@ -1,6 +1,6 @@
 --- a/osfmk/arm64/arm_vm_init.c
 +++ b/osfmk/arm64/arm_vm_init.c
-@@ -363,11 +363,23 @@
+@@ -370,10 +370,22 @@
  #define PTOV_TABLE_SIZE 8
  SECURITY_READ_ONLY_LATE(static ptov_table_entry)        ptov_table[PTOV_TABLE_SIZE];
  SECURITY_READ_ONLY_LATE(static boolean_t)               kva_active = FALSE;
@@ -10,7 +10,6 @@
 +#define J3_LATE_RAM_BANK1_END   ((pmap_paddr_t)0xc0000000ULL)
 +vm_map_address_t j3y17lte_bank1_direct_base = 0;
 +#endif
- 
  
  vm_map_address_t
  phystokv(pmap_paddr_t pa)
@@ -24,7 +23,7 @@
 +#endif
  
  	for (size_t i = 0; (i < PTOV_TABLE_SIZE) && (ptov_table[i].len != 0); i++) {
-@@ -384,6 +397,17 @@
+@@ -386,6 +398,17 @@
  vm_map_address_t
  phystokv_range(pmap_paddr_t pa, vm_size_t *max_len)
  {
@@ -42,7 +41,7 @@
 +	}
 +#endif
  	for (size_t i = 0; (i < PTOV_TABLE_SIZE) && (ptov_table[i].len != 0); i++) {
-@@ -410,4 +436,13 @@
+@@ -411,4 +434,13 @@
  vm_offset_t
  ml_static_vtop(vm_offset_t va)
  {
@@ -86,11 +85,11 @@
  }
 --- a/osfmk/arm/pmap/pmap_data.c
 +++ b/osfmk/arm/pmap/pmap_data.c
-@@ -43,8 +43,12 @@
- *       attributes. The VM operates on regions of memory by the VM page size
- *       and is aware that all hardware pages within each VM page share
- *       attributes.
- */
+@@ -51,8 +51,12 @@
+  *       attributes. The VM operates on regions of memory by the VM page size
+  *       and is aware that all hardware pages within each VM page share
+  *       attributes.
+  */
 -SECURITY_READ_ONLY_LATE(volatile pp_attr_t*) pp_attr_table = (volatile pp_attr_t*)NULL;
 +#if defined(J3Y17LTE)
 +volatile pp_attr_t *pp_attr_table = (volatile pp_attr_t *)NULL;
@@ -99,11 +98,11 @@
 +#endif
  
  /**
- * Physical to Virtual Table.
-@@ -63,7 +67,78 @@
- * so it's recommended to use the provided API in pmap_data.h to access the
- * pv_head_table since it handles these details for you.
- */
+  * Physical to Virtual Table.
+@@ -69,7 +73,78 @@
+  * so it's recommended to use the provided API in pmap_data.h to access the
+  * pv_head_table since it handles these details for you.
+  */
 -SECURITY_READ_ONLY_LATE(pv_entry_t * *) pv_head_table = (pv_entry_t**)NULL;
 +#if defined(J3Y17LTE)
 +pv_entry_t **pv_head_table = (pv_entry_t **)NULL;
@@ -179,8 +178,8 @@
 +#endif
  
  /**
- * Queue chain of userspace page table pages that can be quickly reclaimed by
-@@ -610,10 +610,17 @@
+  * Queue chain of userspace page table pages that can be quickly reclaimed by
+@@ -612,10 +687,17 @@
  	/**
  	 * Allocate enough initial PTDs to map twice the available physical memory.
  	 *
