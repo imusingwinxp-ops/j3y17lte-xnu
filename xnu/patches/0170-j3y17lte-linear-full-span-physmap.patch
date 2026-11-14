@@ -1,0 +1,95 @@
+--- a/osfmk/arm64/arm_vm_init.c
++++ b/osfmk/arm64/arm_vm_init.c
+@@ -1873,6 +1875,6 @@
+ #if defined(ARM_LARGE_MEMORY)
+ #if defined(J3Y17LTE)
+-	unsigned long physmap_l1_entries = ((J3_RAM_USABLE_SIZE + ARM64_PHYSMAP_SLIDE_RANGE + ARM64_PHYSMAP_ALIGNMENT_PADDING) >> ARM_TT_L1_SHIFT) + 1;
++	unsigned long physmap_l1_entries = ((J3_RAM_SPAN_SIZE + ARM64_PHYSMAP_SLIDE_RANGE + ARM64_PHYSMAP_ALIGNMENT_PADDING) >> ARM_TT_L1_SHIFT) + 1;
+ #else
+ 	unsigned long physmap_l1_entries = ((real_phys_size + ARM64_PHYSMAP_SLIDE_RANGE + ARM64_PHYSMAP_ALIGNMENT_PADDING) >> ARM_TT_L1_SHIFT) + 1;
+ #endif
+@@ -1902,15 +1904,15 @@
+ 	/* For large memory systems with no PPL such as virtual machines */
+ 	static_memory_end = phystokv(args->topOfKernelData);
+ #if defined(J3Y17LTE)
+-	physmap_end = physmap_base + J3_RAM_USABLE_SIZE + ARM64_PHYSMAP_ALIGNMENT_PADDING;
++	physmap_end = physmap_base + J3_RAM_SPAN_SIZE + ARM64_PHYSMAP_ALIGNMENT_PADDING;
+ #else
+ 	physmap_end = physmap_base + real_phys_size + ARM64_PHYSMAP_ALIGNMENT_PADDING;
+ #endif
+ #else
+ #if defined(J3Y17LTE)
+-	/* The final J3 physmap packs bank0 + bank1 and deliberately omits the hole. */
+-	static_memory_end = physmap_base + J3_RAM_USABLE_SIZE + ARM64_PHYSMAP_ALIGNMENT_PADDING;
+-	physmap_end = physmap_base + J3_RAM_USABLE_SIZE + ARM64_PHYSMAP_ALIGNMENT_PADDING;
++	/* Preserve PA offsets across the J3 aperture; the allocator still skips the hole. */
++	static_memory_end = physmap_base + J3_RAM_SPAN_SIZE + ARM64_PHYSMAP_ALIGNMENT_PADDING;
++	physmap_end = physmap_base + J3_RAM_SPAN_SIZE + ARM64_PHYSMAP_ALIGNMENT_PADDING;
+ #else
+ 	static_memory_end = physmap_base + mem_size + ARM64_PHYSMAP_ALIGNMENT_PADDING; // worst possible case for block alignment
+ 	physmap_end = physmap_base + real_phys_size + ARM64_PHYSMAP_ALIGNMENT_PADDING;
+@@ -1699,16 +1699,18 @@
+ 	if (args->topOfKernelData >= J3_RAM_BANK0_END) {
+ 		panic("J3 RAM: topOfKernelData outside bank0 (0x%llx)", args->topOfKernelData);
+ 	}
+-	/* Finish bank0, then create an independent aperture segment for bank1.
+-	 * No mapping is created for 0x7e800000..0x80000000. */
++	/*
++	 * Keep one linear final aperture from bank0 through bank1, including PTEs
++	 * for the 24 MiB physical hole. Nothing may allocate/use those hole pages:
++	 * pmap_next_page() skips them and pa_valid() rejects them. Keeping the VA
++	 * offset preserves XNU's PA<->physmap arithmetic across the upper bank.
++	 */
++	sweet_early_mark(364, "J3XNU067 linear full-span physmap entered");
+ 	arm_vm_physmap_slide(temp_ptov_table,
+ 	    (args->topOfKernelData - gPhysBase + gVirtBase),
+-	    J3_RAM_BANK0_END - args->topOfKernelData,
+-	    AP_RWNA, ARM64_GRANULE_ALLOW_BLOCK | ARM64_GRANULE_ALLOW_HINT);
+-	arm_vm_physmap_slide(temp_ptov_table,
+-	    gVirtBase + (J3_RAM_BANK1_START - gPhysBase),
+-	    J3_RAM_BANK1_END - J3_RAM_BANK1_START,
++	    J3_RAM_BANK1_END - args->topOfKernelData,
+ 	    AP_RWNA, ARM64_GRANULE_ALLOW_BLOCK | ARM64_GRANULE_ALLOW_HINT);
++	sweet_early_mark(365, "J3XNU067 linear full-span physmap completed");
+ #else
+ 	arm_vm_physmap_slide(temp_ptov_table, (args->topOfKernelData - gPhysBase + gVirtBase),
+ 	    real_avail_end - args->topOfKernelData, AP_RWNA, ARM64_GRANULE_ALLOW_BLOCK | ARM64_GRANULE_ALLOW_HINT); // rest of physmem
+@@ -2267,6 +2269,10 @@
+ #if defined(J3Y17LTE)
+-	/* Permit page-table construction for the separately mapped upper bank. */
++	/* Permit page-table construction across the complete J3 physical span. */
+ 	real_avail_end = J3_RAM_BANK1_END;
++	sweet_early_mark(363, "J3XNU067 before linear full-span physmap");
+ #endif
+ 	arm_vm_physmap_init(args);
++#if defined(J3Y17LTE)
++	sweet_early_mark(366, "J3XNU067 arm_vm_physmap_init returned");
++#endif
+ 	set_mmu_ttb_alternate(cpu_ttep & TTBR_BADDR_MASK);
+@@ -2287,5 +2293,8 @@
+ 	flush_mmu_tlb();
+ 	sweet_early_mark(10, "TTBR0 off; TLB flushed");
+ 	kva_active = TRUE;
++#if defined(J3Y17LTE)
++	sweet_early_mark(367, "J3XNU067 final TTBR active");
++#endif
+ #if defined(J3Y17LTE)
+ 	/* From this point phystokv() can reach bank1 through ptov_table.
+@@ -2299,5 +2308,8 @@
+ 	cpu_tte = (tt_entry_t*)(phystokv(cpu_ttep));
+ 	invalid_tte = (tt_entry_t*)(phystokv(invalid_ttep));
+ 	sweet_early_mark(11, "physmap table pointers rebound");
++#if defined(J3Y17LTE)
++	sweet_early_mark(368, "J3XNU067 physmap pointers rebound");
++#endif
+ 
+ 	// From here on out, we're off the bootstrap translation tables.
+@@ -2419,5 +2431,8 @@
+ 	sweet_early_mark(12, "calling pmap_bootstrap");
+ 	pmap_bootstrap(dynamic_memory_begin);
+ 	sweet_early_mark(13, "pmap_bootstrap done");
++#if defined(J3Y17LTE)
++	sweet_early_mark(369, "J3XNU067 pmap_bootstrap returned");
++#endif
+ 
+ 	disable_preemption();
