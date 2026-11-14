@@ -1,6 +1,10 @@
 --- a/bsd/dev/j3y17lte_input.c
 +++ b/bsd/dev/j3y17lte_input.c
-@@ -650,40 +650,94 @@
+@@ -612,48 +612,103 @@
+ 	}
+ 	return count;
+ }
+ 
 -static bool
 -j3_rmi_discover(void)
 -{
@@ -87,13 +91,11 @@
 +			if (j3_f01_ctrl && f01_data &&
 +			    j3_f12_query && j3_f12_ctrl && j3_f12_data) {
 +				uint8_t status = 0xffu;
++				uint8_t intr_status = 0;
 +				bool status_ready = false;
 +
-+				/*
-+				 * Samsung waits for F01 CRC completion before initializing
-+				 * F12.  Without this, a freshly powered TD4100 can expose
-+				 * a valid PDT while its functional registers are not ready.
-+				 */
++				/* Match Samsung: wait up to 200 ms for F01 CRC-in-progress
++				 * (status code 0x06) to clear before touching F12. */
 +				for (unsigned tries = 0; tries < 11; tries++) {
 +					if (!j3_rmi_read(f01_data, &status, 1)) {
 +						break;
@@ -104,7 +106,6 @@
 +					}
 +					j3_sleep_ms(&j3_touch_sleep_chan, 20);
 +				}
-+
 +				if (!status_ready) {
 +					if (dump) {
 +						printf("J3 INPUT: TD4100 F01 status not ready %#x\n", status);
@@ -117,10 +118,14 @@
 +					dumped_transport |= transport_bit;
 +					return false;
 +				}
++				/* Samsung clears/observes F01 interrupt status before F12 init. */
++				if (!j3_rmi_read((uint16_t)(f01_data + 1u), &intr_status, 1)) {
++					return false;
++				}
 +
-+				printf("J3 INPUT: TD4100 core ready F01=%#x F12 q=%#x c=%#x d=%#x status=%#x via %s\n",
++				printf("J3 INPUT: TD4100 core ready F01=%#x F12 q=%#x c=%#x d=%#x status=%#x intr=%#x via %s\n",
 +				    j3_f01_ctrl, j3_f12_query, j3_f12_ctrl, j3_f12_data,
-+				    status, j3_touch_hw_i2c ? "HW-I2C" : "GPIO");
++				    status, intr_status, j3_touch_hw_i2c ? "HW-I2C" : "GPIO");
 +				dumped_transport |= transport_bit;
 +				return true;
 +			}
@@ -135,3 +140,7 @@
 +	}
 +	return false;
 +}
+ 
+ static bool
+ j3_touch_setup(void)
+ {
