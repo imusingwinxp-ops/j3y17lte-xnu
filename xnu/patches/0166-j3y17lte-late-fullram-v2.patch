@@ -1,0 +1,396 @@
+--- a/osfmk/arm64/arm_vm_init.c
++++ b/osfmk/arm64/arm_vm_init.c
+@@ -363,11 +363,23 @@
+ #define PTOV_TABLE_SIZE 8
+ SECURITY_READ_ONLY_LATE(static ptov_table_entry)        ptov_table[PTOV_TABLE_SIZE];
+ SECURITY_READ_ONLY_LATE(static boolean_t)               kva_active = FALSE;
+ 
++#if defined(J3Y17LTE)
++#define J3_LATE_RAM_BANK1_START ((pmap_paddr_t)0x80000000ULL)
++#define J3_LATE_RAM_BANK1_END   ((pmap_paddr_t)0xc0000000ULL)
++vm_map_address_t j3y17lte_bank1_direct_base = 0;
++#endif
+ 
+ 
+ vm_map_address_t
+ phystokv(pmap_paddr_t pa)
+ {
++#if defined(J3Y17LTE)
++	if (j3y17lte_bank1_direct_base != 0 &&
++	    pa >= J3_LATE_RAM_BANK1_START && pa < J3_LATE_RAM_BANK1_END) {
++		return j3y17lte_bank1_direct_base +
++		    (pa - J3_LATE_RAM_BANK1_START);
++	}
++#endif
+ 
+ 	for (size_t i = 0; (i < PTOV_TABLE_SIZE) && (ptov_table[i].len != 0); i++) {
+@@ -384,6 +397,17 @@
+ vm_map_address_t
+ phystokv_range(pmap_paddr_t pa, vm_size_t *max_len)
+ {
+ 
+ 	vm_size_t len;
++#if defined(J3Y17LTE)
++	if (j3y17lte_bank1_direct_base != 0 &&
++	    pa >= J3_LATE_RAM_BANK1_START && pa < J3_LATE_RAM_BANK1_END) {
++		len = J3_LATE_RAM_BANK1_END - pa;
++		if (*max_len > len) {
++			*max_len = len;
++		}
++		return j3y17lte_bank1_direct_base +
++		    (pa - J3_LATE_RAM_BANK1_START);
++	}
++#endif
+ 	for (size_t i = 0; (i < PTOV_TABLE_SIZE) && (ptov_table[i].len != 0); i++) {
+@@ -410,4 +436,13 @@
+ vm_offset_t
+ ml_static_vtop(vm_offset_t va)
+ {
++#if defined(J3Y17LTE)
++	if (j3y17lte_bank1_direct_base != 0 &&
++	    va >= j3y17lte_bank1_direct_base &&
++	    va < j3y17lte_bank1_direct_base +
++	    (J3_LATE_RAM_BANK1_END - J3_LATE_RAM_BANK1_START)) {
++		return J3_LATE_RAM_BANK1_START +
++		    (va - j3y17lte_bank1_direct_base);
++	}
++#endif
+ 	for (size_t i = 0; (i < PTOV_TABLE_SIZE) && (ptov_table[i].len != 0); i++) {
+--- a/osfmk/arm/pmap/pmap_data.h
++++ b/osfmk/arm/pmap/pmap_data.h
+@@ -62,3 +62,7 @@
+ extern pmap_paddr_t vm_first_phys, vm_last_phys;
++#if defined(J3Y17LTE)
++extern bool j3y17lte_upper_pmap_ready;
++extern void j3y17lte_pmap_expand_metadata(void);
++#endif
+ 
+ /**
+@@ -78,5 +82,16 @@
+ static inline bool
+ pa_valid(pmap_paddr_t pa)
+ {
+-	return (pa >= vm_first_phys) && (pa < vm_last_phys);
++#if defined(J3Y17LTE)
++	if (pa >= 0x7e800000ULL && pa < 0x80000000ULL) {
++		return false;
++	}
++	if ((pa >= vm_first_phys) && (pa < vm_last_phys)) {
++		return true;
++	}
++	return j3y17lte_upper_pmap_ready &&
++	    pa >= 0x80000000ULL && pa < 0xc0000000ULL;
++#else
++	return (pa >= vm_first_phys) && (pa < vm_last_phys);
++#endif
+ }
+--- a/osfmk/arm/pmap/pmap_data.c
++++ b/osfmk/arm/pmap/pmap_data.c
+@@ -43,8 +43,12 @@
+ *       attributes. The VM operates on regions of memory by the VM page size
+ *       and is aware that all hardware pages within each VM page share
+ *       attributes.
+ */
+-SECURITY_READ_ONLY_LATE(volatile pp_attr_t*) pp_attr_table = (volatile pp_attr_t*)NULL;
++#if defined(J3Y17LTE)
++volatile pp_attr_t *pp_attr_table = (volatile pp_attr_t *)NULL;
++#else
++SECURITY_READ_ONLY_LATE(volatile pp_attr_t*) pp_attr_table = (volatile pp_attr_t*)NULL;
++#endif
+ 
+ /**
+ * Physical to Virtual Table.
+@@ -63,7 +67,78 @@
+ * so it's recommended to use the provided API in pmap_data.h to access the
+ * pv_head_table since it handles these details for you.
+ */
+-SECURITY_READ_ONLY_LATE(pv_entry_t * *) pv_head_table = (pv_entry_t**)NULL;
++#if defined(J3Y17LTE)
++pv_entry_t **pv_head_table = (pv_entry_t **)NULL;
++bool j3y17lte_upper_pmap_ready = false;
++static bool j3y17lte_pmap_metadata_expanded = false;
++
++#define J3_RAM_PHYS_BASE       ((pmap_paddr_t)0x40000000ULL)
++#define J3_RAM_BANK0_END       ((pmap_paddr_t)0x7e800000ULL)
++#define J3_RAM_BANK1_END       ((pmap_paddr_t)0xc0000000ULL)
++
++void
++j3y17lte_pmap_expand_metadata(void)
++{
++	vm_offset_t attrs_addr = 0;
++	vm_offset_t pvh_addr = 0;
++	kern_return_t kr;
++
++	if (j3y17lte_pmap_metadata_expanded) {
++		return;
++	}
++	if (vm_first_phys != J3_RAM_PHYS_BASE || vm_last_phys > J3_RAM_BANK0_END) {
++		panic("J3 RAM: unexpected managed range [%#llx,%#llx)",
++		    (uint64_t)vm_first_phys, (uint64_t)vm_last_phys);
++	}
++
++	const unsigned int old_npages =
++	    (unsigned int)atop(vm_last_phys - vm_first_phys);
++	const unsigned int new_npages =
++	    (unsigned int)atop(J3_RAM_BANK1_END - vm_first_phys);
++	if (old_npages == 0 || old_npages >= new_npages) {
++		panic("J3 RAM: bad pmap metadata pages old=%u new=%u",
++		    old_npages, new_npages);
++	}
++
++	const vm_size_t attrs_size =
++	    round_page((vm_size_t)new_npages * sizeof(pp_attr_t));
++	const vm_size_t pvh_size =
++	    round_page((vm_size_t)new_npages * sizeof(pv_entry_t *));
++
++	kr = kmem_alloc(kernel_map, &attrs_addr, attrs_size,
++	    KMA_DATA | KMA_KOBJECT | KMA_ZERO | KMA_PERMANENT,
++	    VM_KERN_MEMORY_OSFMK);
++	if (kr != KERN_SUCCESS) {
++		panic("J3 RAM: pp_attr expansion failed kr=%d", kr);
++	}
++	kr = kmem_alloc(kernel_map, &pvh_addr, pvh_size,
++	    KMA_DATA | KMA_KOBJECT | KMA_ZERO | KMA_PERMANENT,
++	    VM_KERN_MEMORY_OSFMK);
++	if (kr != KERN_SUCCESS) {
++		panic("J3 RAM: pv_head expansion failed kr=%d", kr);
++	}
++
++	volatile pp_attr_t *new_attrs = (volatile pp_attr_t *)attrs_addr;
++	pv_entry_t **new_pvhs = (pv_entry_t **)pvh_addr;
++
++	/* Allocate both replacements before copying so their own lower-bank
++	 * mappings are captured from the original metadata tables. */
++	for (unsigned int i = 0; i < old_npages; i++) {
++		new_attrs[i] = pp_attr_table[i];
++		new_pvhs[i] = pv_head_table[i];
++	}
++
++	pp_attr_table = new_attrs;
++	pv_head_table = new_pvhs;
++	__asm__ volatile("dsb sy" ::: "memory");
++	j3y17lte_pmap_metadata_expanded = true;
++
++	kprintf("J3 RAM: pmap metadata %u -> %u pages attrs=%llu pvh=%llu\n",
++	    old_npages, new_npages, (uint64_t)attrs_size, (uint64_t)pvh_size);
++}
++#else
++SECURITY_READ_ONLY_LATE(pv_entry_t * *) pv_head_table = (pv_entry_t**)NULL;
++#endif
+ 
+ /**
+ * Queue chain of userspace page table pages that can be quickly reclaimed by
+@@ -610,10 +610,17 @@
+ 	/**
+ 	 * Allocate enough initial PTDs to map twice the available physical memory.
+ 	 *
+ 	 * To do this, start by calculating the number of leaf page tables that are
+ 	 * needed to cover all of kernel-managed physical memory.
+ 	 */
++#if defined(J3Y17LTE)
++	/* Keep normal VM/page metadata sized to the SpringBoard-proven lower bank,
++	 * but reserve enough PT descriptors for the later 2 GiB enclosing PA span. */
++	const vm_size_t ptd_capacity_span = 0x80000000ULL;
++#else
++	const vm_size_t ptd_capacity_span = mem_size;
++#endif
+ 	const uint32_t num_leaf_page_tables =
+-	    (uint32_t)(mem_size / ((PAGE_SIZE / sizeof(pt_entry_t)) * ARM_PGBYTES));
++	    (uint32_t)(ptd_capacity_span / ((PAGE_SIZE / sizeof(pt_entry_t)) * ARM_PGBYTES));
+ 
+ 	/**
+--- a/osfmk/arm/pmap/pmap.c
++++ b/osfmk/arm/pmap/pmap.c
+@@ -1784,5 +1784,62 @@
+ 	return virt;
+ }
+ 
++#if defined(J3Y17LTE)
++vm_map_address_t
++j3y17lte_pmap_map_ram_bd(
++	vm_map_address_t virt,
++	vm_offset_t start,
++	vm_offset_t end,
++	vm_prot_t prot)
++{
++	const pt_attr_t * const pt_attr = pmap_get_pt_attr(kernel_pmap);
++	vm_map_address_t vaddr = virt;
++	vm_offset_t paddr = start;
++
++	while (paddr < end) {
++		pt_entry_t *ptep = pmap_pte(kernel_pmap, vaddr);
++		if (ptep == PT_ENTRY_NULL) {
++			kern_return_t kr;
++			do {
++				kr = pmap_expand(kernel_pmap, vaddr, 0,
++				    pt_attr_leaf_level(pt_attr));
++			} while (kr == KERN_ABORTED);
++			if (kr != KERN_SUCCESS) {
++				panic("J3 RAM: pmap_expand failed kr=%d va=%p",
++				    kr, (void *)vaddr);
++			}
++			ptep = pmap_pte(kernel_pmap, vaddr);
++			if (ptep == PT_ENTRY_NULL) {
++				panic("J3 RAM: no PTE after expand va=%p",
++				    (void *)vaddr);
++			}
++		}
++
++		if (*ptep != ARM_PTE_TYPE_FAULT) {
++			panic("J3 RAM: bank1 VA already populated va=%p pte=%#llx",
++			    (void *)vaddr, (uint64_t)*ptep);
++		}
++
++		pt_entry_t pte = pa_to_pte(paddr) | ARM_PTE_TYPE | ARM_PTE_AF |
++		    ARM_PTE_NX | ARM_PTE_PNX |
++		    ARM_PTE_AP((prot & VM_PROT_WRITE) ? AP_RWNA : AP_RONA) |
++		    ARM_PTE_ATTRINDX(CACHE_ATTRINDX_DEFAULT) |
++		    ARM_PTE_SH(SH_OUTER_MEMORY);
++#if __ARM_KERNEL_PROTECT__
++		pte |= ARM_PTE_NG;
++#endif
++		write_pte_strong(ptep, pte);
++
++		vaddr += PAGE_SIZE;
++		paddr += PAGE_SIZE;
++	}
++
++	if (end > start) {
++		flush_mmu_tlb_region(virt, (unsigned)(end - start));
++	}
++	return vaddr;
++}
++#endif
++
+ vm_map_address_t
+ pmap_map_bd_with_options(
+@@ -7433,4 +7433,10 @@
+ boolean_t
+ pmap_has_managed_page(ppnum_t first, ppnum_t last)
+ {
++#if defined(J3Y17LTE)
++	if (j3y17lte_upper_pmap_ready &&
++	    ptoa(last) >= 0x80000000ULL && ptoa(first) < 0xc0000000ULL) {
++		return TRUE;
++	}
++#endif
+ 	if (ptoa(first) >= vm_last_phys) {
+--- a/osfmk/mach/arm/vm_param.h
++++ b/osfmk/mach/arm/vm_param.h
+@@ -288,6 +288,12 @@
+ extern unsigned long            gVirtBase, gPhysBase, gPhysSize;
+ 
+-#define isphysmem(a)            (((vm_address_t)(a) - gPhysBase) < gPhysSize)
++#if defined(J3Y17LTE)
++#define isphysmem(a)            (((((uint64_t)(a) >= 0x40000000ULL) && \
++	((uint64_t)(a) < 0x7e800000ULL))) || \
++	(((uint64_t)(a) >= 0x80000000ULL) && ((uint64_t)(a) < 0xc0000000ULL)))
++#else
++#define isphysmem(a)            (((vm_address_t)(a) - gPhysBase) < gPhysSize)
++#endif
+ #define physmap_enclosed(a)     isphysmem(a)
+ 
+ /*
+@@ -300,5 +307,11 @@
+ #include <stdint.h>
+ extern uint64_t                 gDramBase, gDramSize;
+-#define is_dram_addr(addr)      (((uint64_t)(addr) - gDramBase) < gDramSize)
++#if defined(J3Y17LTE)
++#define is_dram_addr(addr)      (((((uint64_t)(addr) >= 0x40000000ULL) && \
++	((uint64_t)(addr) < 0x7e800000ULL))) || \
++	(((uint64_t)(addr) >= 0x80000000ULL) && ((uint64_t)(addr) < 0xc0000000ULL)))
++#else
++#define is_dram_addr(addr)      (((uint64_t)(addr) - gDramBase) < gDramSize)
++#endif
+ 
+ #endif /* MACH_KERNEL_PRIVATE */
+--- a/osfmk/vm/vm_init.c
++++ b/osfmk/vm/vm_init.c
+@@ -87,5 +87,75 @@
+ TUNABLE(bool, iokit_iomd_setownership_enabled,
+     "iokit_iomd_setownership_enabled", true);
+ 
++#if defined(J3Y17LTE)
++#include <arm/pmap.h>
++#include <arm/pmap/pmap_data.h>
++
++#define J3_BANK1_START ((pmap_paddr_t)0x80000000ULL)
++#define J3_BANK1_END   ((pmap_paddr_t)0xc0000000ULL)
++#define J3_BANK1_SIZE  ((vm_size_t)(J3_BANK1_END - J3_BANK1_START))
++#define J3_RAM_TOTAL   ((uint64_t)0x7e800000ULL)
++
++extern vm_offset_t mem_size;
++extern uint64_t mem_actual;
++extern uint64_t max_mem;
++extern uint64_t max_mem_actual;
++extern uint64_t sane_size;
++extern vm_map_address_t j3y17lte_bank1_direct_base;
++extern vm_map_address_t j3y17lte_pmap_map_ram_bd(
++	vm_map_address_t virt, vm_offset_t start, vm_offset_t end,
++	vm_prot_t prot);
++
++static void
++j3y17lte_add_bank1(void)
++{
++	vm_offset_t va = 0;
++	kern_return_t kr;
++
++	kprintf("J3 RAM: late bank1 begin lower=%llu MiB\n",
++	    (uint64_t)(max_mem >> 20));
++
++	/* Keep the SpringBoard-proven bootstrap geometry untouched. Grow only
++	 * the per-physical-page pmap metadata after normal VM/zalloc is online. */
++	j3y17lte_pmap_expand_metadata();
++
++	kr = kmem_alloc(kernel_map, &va, J3_BANK1_SIZE,
++	    KMA_PERMANENT | KMA_KOBJECT | KMA_VAONLY | KMA_DATA,
++	    VM_KERN_MEMORY_OSFMK);
++	if (kr != KERN_SUCCESS) {
++		panic("J3 RAM: bank1 VA reserve failed kr=%d", kr);
++	}
++	kprintf("J3 RAM: bank1 VA=%p\n", (void *)va);
++
++	vm_map_address_t mapped_end = j3y17lte_pmap_map_ram_bd(va,
++	    J3_BANK1_START, J3_BANK1_END, VM_PROT_READ | VM_PROT_WRITE);
++	if (mapped_end != va + J3_BANK1_SIZE) {
++		panic("J3 RAM: bank1 direct-map incomplete");
++	}
++
++	j3y17lte_bank1_direct_base = va;
++	__asm__ volatile("dsb sy" ::: "memory");
++	j3y17lte_upper_pmap_ready = true;
++	__asm__ volatile("dsb sy" ::: "memory");
++
++	/* vm_page_create() is XNU's supported late-discovered-RAM path. */
++	vm_page_create((ppnum_t)atop_64(J3_BANK1_START),
++	    (ppnum_t)atop_64(J3_BANK1_END));
++
++	mem_size += J3_BANK1_SIZE;
++	max_mem += J3_BANK1_SIZE;
++	sane_size += J3_BANK1_SIZE;
++	if (mem_actual < J3_RAM_TOTAL) {
++		mem_actual = J3_RAM_TOTAL;
++	}
++	if (max_mem_actual < J3_RAM_TOTAL) {
++		max_mem_actual = J3_RAM_TOTAL;
++	}
++
++	kprintf("J3 RAM: bank1 online total=%llu MiB expected=2024 MiB\n",
++	    (uint64_t)(max_mem >> 20));
++}
++#endif
++
+ static inline void
+ vm_mem_bootstrap_log(const char *message)
+@@ -132,6 +132,11 @@
+ 	vm_mem_bootstrap_log("vm_fault_init");
+ 	vm_fault_init();
+ 
+ 	kernel_startup_initialize_upto(STARTUP_SUB_ZALLOC);
++
++#if defined(J3Y17LTE)
++	vm_mem_bootstrap_log("J3XNU081 late bank1");
++	j3y17lte_add_bank1();
++#endif
+ 
+ 	if (iokit_iomd_setownership_enabled) {
