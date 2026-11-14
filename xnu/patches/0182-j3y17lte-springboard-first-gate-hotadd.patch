@@ -1,0 +1,24 @@
+--- a/osfmk/vm/vm_init.c
++++ b/osfmk/vm/vm_init.c
+@@ -101,6 +101,7 @@
+ #define J3_BANK1_HOTADD_SIZE  ((vm_size_t)(J3_BANK1_HOTADD_END - J3_BANK1_HOTADD_START))
+ 
+ bool j3y17lte_upper_ram_online = false;
++TUNABLE(bool, j3y17lte_bank1_hotadd_enabled, "j3ram", false);
+ 
+ extern vm_offset_t mem_size;
+ extern uint64_t mem_actual;
+@@ -195,8 +196,13 @@
+ 
+ #if defined(J3Y17LTE)
+-	vm_mem_bootstrap_log("J3XNU071 hot-add bank1");
+-	j3y17lte_hotadd_bank1();
++	if (j3y17lte_bank1_hotadd_enabled) {
++		vm_mem_bootstrap_log("J3XNU071 hot-add bank1");
++		j3y17lte_hotadd_bank1();
++	} else {
++		kprintf("J3 RAM: bank1 hotadd disabled (use j3ram=1)\n");
++	}
+ #endif
+ 
+ 	if (iokit_iomd_setownership_enabled) {
