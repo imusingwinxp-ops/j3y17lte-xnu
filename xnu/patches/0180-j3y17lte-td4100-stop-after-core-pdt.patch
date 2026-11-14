@@ -1,58 +1,132 @@
 --- a/bsd/dev/j3y17lte_input.c
 +++ b/bsd/dev/j3y17lte_input.c
-@@ -680,8 +680,12 @@
- static bool
- j3_rmi_discover(void)
- {
-+	static unsigned dumped_transport;
-+	unsigned transport_bit = j3_touch_hw_i2c ? 1u : 2u;
-+	bool dump = !(dumped_transport & transport_bit);
-+
- 	j3_f01_ctrl = 0;
- 	j3_f12_query = j3_f12_ctrl = j3_f12_data = 0;
- 
- 	for (unsigned page = 0; page < J3_RMI_PAGES; page++) {
-@@ -701,11 +705,12 @@
- 				}
- 				return false;
- 			}
+@@ -650,40 +650,94 @@
+-static bool
+-j3_rmi_discover(void)
+-{
+-	j3_f01_ctrl = 0;
+-	j3_f12_query = j3_f12_ctrl = j3_f12_data = 0;
+-
+-	for (unsigned page = 0; page < J3_RMI_PAGES; page++) {
+-		for (int reg = J3_RMI_PDT_START; reg > (int)J3_RMI_PDT_END;
+-		    reg -= J3_RMI_PDT_SIZE) {
+-			uint8_t fd[6];
+-			uint16_t addr = (uint16_t)((page << 8) | (unsigned)reg);
+-			if (!j3_rmi_read(addr, fd, sizeof(fd))) {
+-				static unsigned failed_transport;
+-				unsigned bit = j3_touch_hw_i2c ? 1u : 2u;
+-				if (!(failed_transport & bit)) {
+-					printf("J3 INPUT: TD4100 PDT read failed page=%u reg=%#x via %s\n",
+-					    page, reg, j3_touch_hw_i2c ? "HW-I2C" : "GPIO");
+-					failed_transport |= bit;
+-				}
+-				return false;
+-			}
 -			if (page == 0 && reg == J3_RMI_PDT_START) {
 -				printf("J3 INPUT: TD4100 PDT0 e9=%02x:%02x:%02x:%02x:%02x:%02x via %s\n",
 -				    fd[0], fd[1], fd[2], fd[3], fd[4], fd[5],
 -				    j3_touch_hw_i2c ? "HW-I2C" : "GPIO");
 -			}
- 			if (fd[5] == 0) {
- 				break;
- 			}
+-			if (fd[5] == 0) {
+-				break;
+-			}
+-			if (fd[5] == J3_RMI_F01) {
+-				j3_f01_ctrl = (uint16_t)((page << 8) | fd[2]);
+-			} else if (fd[5] == J3_RMI_F12) {
+-				j3_f12_query = (uint16_t)((page << 8) | fd[0]);
+-				j3_f12_ctrl = (uint16_t)((page << 8) | fd[2]);
+-				j3_f12_data = (uint16_t)((page << 8) | fd[3]);
+-			}
+-		}
+-	}
+-	return j3_f01_ctrl && j3_f12_query && j3_f12_ctrl && j3_f12_data;
+-}
++static bool
++j3_rmi_discover(void)
++{
++	static unsigned dumped_transport;
++	unsigned transport_bit = j3_touch_hw_i2c ? 1u : 2u;
++	bool dump = !(dumped_transport & transport_bit);
++	uint16_t f01_data = 0;
++
++	j3_f01_ctrl = 0;
++	j3_f12_query = j3_f12_ctrl = j3_f12_data = 0;
++
++	for (unsigned page = 0; page < J3_RMI_PAGES; page++) {
++		for (int reg = J3_RMI_PDT_START; reg > (int)J3_RMI_PDT_END;
++		    reg -= J3_RMI_PDT_SIZE) {
++			uint8_t fd[6];
++			uint16_t addr = (uint16_t)((page << 8) | (unsigned)reg);
++			if (!j3_rmi_read(addr, fd, sizeof(fd))) {
++				static unsigned failed_transport;
++				unsigned bit = j3_touch_hw_i2c ? 1u : 2u;
++				if (!(failed_transport & bit)) {
++					printf("J3 INPUT: TD4100 PDT read failed page=%u reg=%#x via %s\n",
++					    page, reg, j3_touch_hw_i2c ? "HW-I2C" : "GPIO");
++					failed_transport |= bit;
++				}
++				return false;
++			}
++			if (fd[5] == 0) {
++				break;
++			}
 +			if (dump) {
 +				printf("J3 INPUT: TD4100 PDT p%u r=%#x F%02x q=%02x c=%02x d=%02x intr=%u via %s\n",
 +				    page, reg, fd[5], fd[0], fd[2], fd[3], fd[4] & 7u,
 +				    j3_touch_hw_i2c ? "HW-I2C" : "GPIO");
 +			}
- 			if (fd[5] == J3_RMI_F01) {
- 				j3_f01_ctrl = (uint16_t)((page << 8) | fd[2]);
- 			} else if (fd[5] == J3_RMI_F12) {
-@@ -713,9 +718,22 @@
- 				j3_f12_ctrl = (uint16_t)((page << 8) | fd[2]);
- 				j3_f12_data = (uint16_t)((page << 8) | fd[3]);
- 			}
-+			/*
-+			 * This bridge only consumes F01 and F12.  Do not keep probing
-+			 * unrelated higher PDT pages after both core functions are known;
-+			 * a later optional-page I/O failure must not invalidate them.
-+			 */
-+			if (j3_f01_ctrl && j3_f12_query && j3_f12_ctrl && j3_f12_data) {
-+				if (dump) {
-+					printf("J3 INPUT: TD4100 core PDT ready F01=%#x F12 q=%#x c=%#x d=%#x via %s\n",
-+					    j3_f01_ctrl, j3_f12_query, j3_f12_ctrl, j3_f12_data,
-+					    j3_touch_hw_i2c ? "HW-I2C" : "GPIO");
++			if (fd[5] == J3_RMI_F01) {
++				j3_f01_ctrl = (uint16_t)((page << 8) | fd[2]);
++				f01_data = (uint16_t)((page << 8) | fd[3]);
++			} else if (fd[5] == J3_RMI_F12 && (fd[4] & 7u)) {
++				j3_f12_query = (uint16_t)((page << 8) | fd[0]);
++				j3_f12_ctrl = (uint16_t)((page << 8) | fd[2]);
++				j3_f12_data = (uint16_t)((page << 8) | fd[3]);
++			}
++
++			if (j3_f01_ctrl && f01_data &&
++			    j3_f12_query && j3_f12_ctrl && j3_f12_data) {
++				uint8_t status = 0xffu;
++				bool status_ready = false;
++
++				/*
++				 * Samsung waits for F01 CRC completion before initializing
++				 * F12.  Without this, a freshly powered TD4100 can expose
++				 * a valid PDT while its functional registers are not ready.
++				 */
++				for (unsigned tries = 0; tries < 11; tries++) {
++					if (!j3_rmi_read(f01_data, &status, 1)) {
++						break;
++					}
++					if ((status & 0x0fu) != 0x06u) {
++						status_ready = true;
++						break;
++					}
++					j3_sleep_ms(&j3_touch_sleep_chan, 20);
 +				}
++
++				if (!status_ready) {
++					if (dump) {
++						printf("J3 INPUT: TD4100 F01 status not ready %#x\n", status);
++						dumped_transport |= transport_bit;
++					}
++					return false;
++				}
++				if (status & 0x40u) {
++					printf("J3 INPUT: TD4100 F01 flash-program mode status=%#x\n", status);
++					dumped_transport |= transport_bit;
++					return false;
++				}
++
++				printf("J3 INPUT: TD4100 core ready F01=%#x F12 q=%#x c=%#x d=%#x status=%#x via %s\n",
++				    j3_f01_ctrl, j3_f12_query, j3_f12_ctrl, j3_f12_data,
++				    status, j3_touch_hw_i2c ? "HW-I2C" : "GPIO");
 +				dumped_transport |= transport_bit;
 +				return true;
 +			}
- 		}
- 	}
--	return j3_f01_ctrl && j3_f12_query && j3_f12_ctrl && j3_f12_data;
++		}
++	}
++
 +	if (dump) {
 +		printf("J3 INPUT: TD4100 PDT incomplete F01=%#x F12 q=%#x c=%#x d=%#x via %s\n",
 +		    j3_f01_ctrl, j3_f12_query, j3_f12_ctrl, j3_f12_data,
@@ -60,4 +134,4 @@
 +		dumped_transport |= transport_bit;
 +	}
 +	return false;
- }
++}
