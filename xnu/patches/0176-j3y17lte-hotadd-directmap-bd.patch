@@ -1,0 +1,30 @@
+--- a/osfmk/arm/pmap/pmap_data.h
++++ b/osfmk/arm/pmap/pmap_data.h
+@@ -82,17 +82,21 @@
+ pa_valid(pmap_paddr_t pa)
+ {
+ #if defined(J3Y17LTE)
++	/*
++	 * J3XNU073: bank1 is a late-hot-added range.  Test it before the
++	 * loader-provided vm_first_phys..vm_last_phys span so a broad loader
++	 * range cannot accidentally make bank1 PV-managed before its direct-map
++	 * exists.
++	 */
++	if (pa >= 0x80000000ULL && pa < 0xc0000000ULL) {
++		return j3y17lte_upper_ram_online;
++	}
+ 	/* The Samsung hole is never RAM, regardless of what the loader reports. */
+ 	if (pa >= 0x7e800000ULL && pa < 0x80000000ULL) {
+ 		return false;
+ 	}
+ 	/* Keep the loader-provided lower managed range exactly as booted. */
+-	if ((pa >= vm_first_phys) && (pa < vm_last_phys)) {
+-		return true;
+-	}
+-	/* Bank1 only becomes managed after its late direct-map is installed. */
+-	return j3y17lte_upper_ram_online &&
+-	    (pa >= 0x80000000ULL) && (pa < 0xc0000000ULL);
++	return (pa >= vm_first_phys) && (pa < vm_last_phys);
+ #else
+ 	return (pa >= vm_first_phys) && (pa < vm_last_phys);
+ #endif
