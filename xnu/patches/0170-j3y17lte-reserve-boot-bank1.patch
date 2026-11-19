@@ -1,6 +1,6 @@
 --- a/osfmk/vm/vm_init.c
 +++ b/osfmk/vm/vm_init.c
-@@ -102,7 +102,8 @@
+@@ -102,6 +102,7 @@
  extern uint64_t max_mem_actual;
  extern uint64_t sane_size;
  extern unsigned int vm_pages_count;
@@ -8,7 +8,7 @@
  extern vm_map_address_t j3y17lte_bank1_direct_base;
  extern vm_map_address_t j3y17lte_pmap_map_ram_bd(
  	vm_map_address_t virt, vm_offset_t start, vm_offset_t end,
-@@ -175,6 +176,19 @@
+@@ -175,6 +176,20 @@
  	if (vm_pages_end_pa > hotadd_start) {
  		hotadd_start = vm_pages_end_pa;
  	}
