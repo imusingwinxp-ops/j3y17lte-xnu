@@ -8,7 +8,7 @@
  extern vm_map_address_t j3y17lte_bank1_direct_base;
  extern vm_map_address_t j3y17lte_pmap_map_ram_bd(
  	vm_map_address_t virt, vm_offset_t start, vm_offset_t end,
-@@ -113,6 +114,7 @@
+@@ -113,7 +114,8 @@
  {
  	vm_offset_t va = 0;
  	kern_return_t kr;
@@ -17,7 +17,7 @@
  
  	kprintf("J3 RAM: late bank1 begin lower=%llu MiB first=%#llx last=%#llx\n",
  	    (uint64_t)(max_mem >> 20), (uint64_t)vm_first_phys,
-@@ -149,15 +151,30 @@
+@@ -149,16 +151,31 @@
  	j3y17lte_upper_pmap_ready = true;
  	__asm__ volatile("dsb sy" ::: "memory");
  
