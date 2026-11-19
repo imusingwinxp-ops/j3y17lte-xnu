@@ -1,0 +1,109 @@
+--- a/osfmk/arm/pmap/pmap_data.c
++++ b/osfmk/arm/pmap/pmap_data.c
+@@ -91,19 +91,32 @@ j3y17lte_pmap_expand_metadata(void)
+ 	if (j3y17lte_pmap_metadata_expanded) {
+ 		return;
+ 	}
+-	if (vm_first_phys != J3_RAM_PHYS_BASE || vm_last_phys > J3_RAM_BANK0_END) {
+-		panic("J3 RAM: unexpected managed range [%#llx,%#llx)",
+-		    (uint64_t)vm_first_phys, (uint64_t)vm_last_phys);
++	if (vm_first_phys >= J3_RAM_BANK1_END) {
++		panic("J3 RAM: bad managed base %#llx",
++		    (uint64_t)vm_first_phys);
+ 	}
+ 
++	/*
++	 * pmap_data_bootstrap() sized the live pp_attr/PV arrays from mem_size,
++	 * not from vm_last_phys.  Use that exact original capacity when copying.
++	 * The SpringBoard-proven loader is allowed to choose its own managed
++	 * physical base/end; only require that bank1 remains indexable above it.
++	 */
+ 	const unsigned int old_npages =
+-	    (unsigned int)atop(vm_last_phys - vm_first_phys);
++	    (unsigned int)atop(mem_size);
+ 	const unsigned int new_npages =
+ 	    (unsigned int)atop(J3_RAM_BANK1_END - vm_first_phys);
+-	if (old_npages == 0 || old_npages >= new_npages) {
++	if (old_npages == 0 || new_npages == 0 || old_npages > new_npages) {
+ 		panic("J3 RAM: bad pmap metadata pages old=%u new=%u",
+ 		    old_npages, new_npages);
+ 	}
++	kprintf("J3 RAM: managed first=%#llx last=%#llx mem=%llu MiB metadata=%u/%u pages\n",
++	    (uint64_t)vm_first_phys, (uint64_t)vm_last_phys,
++	    (uint64_t)(mem_size >> 20), old_npages, new_npages);
++	if (old_npages == new_npages) {
++		j3y17lte_pmap_metadata_expanded = true;
++		return;
++	}
+ 
+ 	const vm_size_t attrs_size =
+ 	    round_page((vm_size_t)new_npages * sizeof(pp_attr_t));
+--- a/osfmk/vm/vm_init.c
++++ b/osfmk/vm/vm_init.c
+@@ -113,9 +113,11 @@ j3y17lte_add_bank1(void)
+ {
+ 	vm_offset_t va = 0;
+ 	kern_return_t kr;
++	pmap_paddr_t hotadd_start = J3_BANK1_START;
+ 
+-	kprintf("J3 RAM: late bank1 begin lower=%llu MiB\n",
+-	    (uint64_t)(max_mem >> 20));
++	kprintf("J3 RAM: late bank1 begin lower=%llu MiB first=%#llx last=%#llx\n",
++	    (uint64_t)(max_mem >> 20), (uint64_t)vm_first_phys,
++	    (uint64_t)vm_last_phys);
+ 
+ 	/* Keep the SpringBoard-proven bootstrap geometry untouched. Grow only
+ 	 * the per-physical-page pmap metadata after normal VM/zalloc is online. */
+@@ -145,21 +147,39 @@ j3y17lte_add_bank1(void)
+ 	j3y17lte_upper_pmap_ready = true;
+ 	__asm__ volatile("dsb sy" ::: "memory");
+ 
+-	/* vm_page_create() is XNU's supported late-discovered-RAM path. */
+-	vm_page_create((ppnum_t)atop_64(J3_BANK1_START),
+-	    (ppnum_t)atop_64(J3_BANK1_END));
+-
+-	mem_size += J3_BANK1_SIZE;
+-	max_mem += J3_BANK1_SIZE;
+-	sane_size += J3_BANK1_SIZE;
+-	if (mem_actual < J3_RAM_TOTAL) {
+-		mem_actual = J3_RAM_TOTAL;
++	/*
++	 * Never pass pages already owned by the loader/VM to vm_page_create()
++	 * a second time.  vm_last_phys is the loader-managed pmap end captured
++	 * during the proven lower-memory bootstrap.
++	 */
++	if (vm_last_phys > hotadd_start) {
++		hotadd_start = vm_last_phys;
++		if (hotadd_start > J3_BANK1_END) {
++			hotadd_start = J3_BANK1_END;
++		}
+ 	}
+-	if (max_mem_actual < J3_RAM_TOTAL) {
+-		max_mem_actual = J3_RAM_TOTAL;
++	const vm_size_t hotadd_size = J3_BANK1_END - hotadd_start;
++	kprintf("J3 RAM: loader end=%#llx add=[%#llx,%#llx) size=%llu MiB\n",
++	    (uint64_t)vm_last_phys, (uint64_t)hotadd_start,
++	    (uint64_t)J3_BANK1_END, (uint64_t)(hotadd_size >> 20));
++
++	/* vm_page_create() is XNU's supported late-discovered-RAM path. */
++	if (hotadd_size != 0) {
++		vm_page_create((ppnum_t)atop_64(hotadd_start),
++		    (ppnum_t)atop_64(J3_BANK1_END));
+ 	}
+ 
+-	kprintf("J3 RAM: bank1 online total=%llu MiB expected=2024 MiB\n",
+-	    (uint64_t)(max_mem >> 20));
++	mem_size += hotadd_size;
++	max_mem += hotadd_size;
++	sane_size += hotadd_size;
++	if (mem_actual < max_mem) {
++		mem_actual = max_mem;
++	}
++	if (max_mem_actual < max_mem) {
++		max_mem_actual = max_mem;
++	}
++
++	kprintf("J3 RAM: bank1 online total=%llu MiB target=2024 MiB added=%llu MiB\n",
++	    (uint64_t)(max_mem >> 20), (uint64_t)(hotadd_size >> 20));
+ }
+ #endif
