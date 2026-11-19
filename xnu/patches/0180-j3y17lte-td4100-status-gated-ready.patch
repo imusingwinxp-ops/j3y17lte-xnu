@@ -1,0 +1,113 @@
+--- a/bsd/dev/j3y17lte_input.c
++++ b/bsd/dev/j3y17lte_input.c
+@@ -885,18 +885,22 @@
+ 		return false;
+ 	}
+ 
+-	uint8_t ctrl_verify = 0;
+-	if (!j3_rmi_read(j3_f01_ctrl, &ctrl_verify, 1)) {
+-		printf("J3 INPUT: TD4100 setup fail F01 ctrl verify read\n");
+-		return false;
+-	}
+-	if (!(ctrl_verify & J3_RMI_CONFIGURED)) {
+-		printf("J3 INPUT: TD4100 setup fail F01 configured did not latch ctrl=%#x\n",
+-		    ctrl_verify);
+-		return false;
+-	}
+-
+-	uint8_t status = 0xffu;
++	uint8_t ctrl_verify = 0;
++	if (!j3_rmi_read(j3_f01_ctrl, &ctrl_verify, 1)) {
++		printf("J3 INPUT: TD4100 setup fail F01 ctrl verify read\n");
++		return false;
++	}
++	/*
++	 * Samsung does not require CONFIGURED to read back from F01 Control 0.
++	 * This TD4100 ACKs the write and clears Device Status to 0 while
++	 * Control 0 still reads 0, so Device Status bit 7 is authoritative.
++	 */
++	if (!(ctrl_verify & J3_RMI_CONFIGURED)) {
++		printf("J3 INPUT: TD4100 F01 configured readback clear ctrl=%#x; checking status\n",
++		    ctrl_verify);
++	}
++
++	uint8_t status = 0xffu;
+ 	bool status_configured = false;
+ 	for (unsigned tries = 0; tries < 6; tries++) {
+ 		if (!j3_f01_data || !j3_rmi_read(j3_f01_data, &status, 1)) {
+@@ -949,37 +953,44 @@
+ 	}
+ }
+ 
+-static bool
+-j3_touch_frame(void)
+-{
+-	static unsigned health_tick;
+-	static bool logged_activity;
+-
+-	/*
+-	 * F01 bit 7 means the sensor reset and lost its F12 configuration.
+-	 * The Samsung driver reinitialises in that case.  Poll it cheaply so
+-	 * lock/wake or panel power transitions cannot leave touch dead forever.
+-	 */
+-	if (++health_tick >= 25u) {
+-		uint8_t status = 0;
+-		health_tick = 0;
+-		if (!j3_f01_data || !j3_rmi_read(j3_f01_data, &status, 1)) {
+-			return false;
+-		}
+-		if ((status & 0x80u) && !(status & 0x40u)) {
+-			printf("J3 INPUT: TD4100 reset/unconfigured status=%#x; reinitialising\n", status);
+-			return false;
+-		}
+-	}
+-
+-	uint8_t frame[J3_TOUCH_POINTS * J3_TOUCH_STRIDE];
+-	unsigned bytes = j3_touch_points * J3_TOUCH_STRIDE;
+-	if (!bytes || bytes > sizeof(frame) ||
+-	    !j3_rmi_read(j3_f12_data1, frame, bytes)) {
+-		return false;
+-	}
+-
+-	for (unsigned i = 0; i < j3_touch_points; i++) {
++static bool
++j3_touch_frame(void)
++{
++	static unsigned health_tick;
++	static bool logged_activity;
++	static bool logged_frame_poll;
++
++	/*
++	 * F01 bit 7 means the sensor reset and lost its F12 configuration.
++	 * The Samsung driver reinitialises in that case.  Poll it cheaply so
++	 * lock/wake or panel power transitions cannot leave touch dead forever.
++	 */
++	if (++health_tick >= 25u) {
++		uint8_t status = 0;
++		health_tick = 0;
++		if (!j3_f01_data || !j3_rmi_read(j3_f01_data, &status, 1)) {
++			return false;
++		}
++		if ((status & 0x80u) && !(status & 0x40u)) {
++			printf("J3 INPUT: TD4100 reset/unconfigured status=%#x; reinitialising\n", status);
++			return false;
++		}
++	}
++
++	uint8_t frame[J3_TOUCH_POINTS * J3_TOUCH_STRIDE];
++	unsigned bytes = j3_touch_points * J3_TOUCH_STRIDE;
++	if (!bytes || bytes > sizeof(frame) ||
++	    !j3_rmi_read(j3_f12_data1, frame, bytes)) {
++		return false;
++	}
++	if (!logged_frame_poll) {
++		printf("J3 INPUT: TD4100 frame polling active d1=%#x bytes=%u first=%02x:%02x:%02x:%02x:%02x:%02x:%02x\n",
++		    j3_f12_data1, bytes,
++		    frame[0], frame[1], frame[2], frame[3], frame[4], frame[5], frame[6]);
++		logged_frame_poll = true;
++	}
++
++	for (unsigned i = 0; i < j3_touch_points; i++) {
+ 		unsigned off = i * J3_TOUCH_STRIDE;
+ 		unsigned status = frame[off] & 0x07u;
+ 		unsigned rawx = (unsigned)frame[off + 1] |
