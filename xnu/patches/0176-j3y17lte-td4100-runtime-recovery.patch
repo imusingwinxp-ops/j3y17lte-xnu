@@ -1,0 +1,163 @@
+--- a/bsd/dev/j3y17lte_input.c
++++ b/bsd/dev/j3y17lte_input.c
+@@ -51,7 +51,7 @@
+ #define J3_RMI_NO_SLEEP         0x04u
+ #define J3_RMI_REPORT_ENABLE    0xdfu
+ 
+-#define J3_TOUCH_POINTS         5u
++#define J3_TOUCH_POINTS         10u
+ #define J3_TOUCH_STRIDE         7u
+ #define J3_TOUCH_W              720u
+ #define J3_TOUCH_H              1280u
+@@ -66,6 +66,7 @@
+ static bool j3_touch_hw_i2c;
+ static unsigned j3_sda_pin;
+ static unsigned j3_scl_pin;
++static uint16_t j3_f01_data;
+ static uint16_t j3_f01_ctrl;
+ static uint16_t j3_f12_query;
+ static uint16_t j3_f12_ctrl;
+@@ -267,7 +268,7 @@
+ }
+ 
+ static bool
+-j3_hw_rmi_read(uint16_t addr, uint8_t *data, unsigned count)
++j3_hw_rmi_read_once(uint16_t addr, uint8_t *data, unsigned count)
+ {
+ 	if (!count || !j3_hw_rmi_prefix(addr)) {
+ 		return false;
+@@ -302,7 +303,24 @@
+ }
+ 
+ static bool
+-j3_hw_rmi_write(uint16_t addr, const uint8_t *data, unsigned count)
++j3_hw_rmi_read(uint16_t addr, uint8_t *data, unsigned count)
++{
++	/*
++	 * Samsung's TD4x00 driver retries failed transfers three times with a
++	 * 20 ms pause.  Do the same here: the S3C I2C block can transiently
++	 * miss a phase while the incell controller is changing power state.
++	 */
++	for (unsigned attempt = 0; attempt < 3; attempt++) {
++		if (j3_hw_rmi_read_once(addr, data, count)) {
++			return true;
++		}
++		j3_hw_stop();
++		if (attempt + 1 < 3) {
++			delay(20000);
++		}
++	}
++	return false;
++}
++
++static bool
++j3_hw_rmi_write_once(uint16_t addr, const uint8_t *data, unsigned count)
+ {
+ 	if (!count || !j3_hw_rmi_prefix(addr)) {
+ 		return false;
+@@ -320,6 +338,23 @@
+ 	return true;
+ }
+ 
++static bool
++j3_hw_rmi_write(uint16_t addr, const uint8_t *data, unsigned count)
++{
++	for (unsigned attempt = 0; attempt < 3; attempt++) {
++		if (j3_hw_rmi_write_once(addr, data, count)) {
++			return true;
++		}
++		j3_hw_stop();
++		if (attempt + 1 < 3) {
++			delay(20000);
++		}
++	}
++	return false;
++}
++
+ static bool
+ j3_hw_probe(void)
+ {
+@@ -618,11 +653,11 @@
+ 	static unsigned dumped_transport;
+ 	unsigned transport_bit = j3_touch_hw_i2c ? 1u : 2u;
+ 	bool dump = !(dumped_transport & transport_bit);
+-	uint16_t f01_data = 0;
+ 
++	j3_f01_data = 0;
+ 	j3_f01_ctrl = 0;
+ 	j3_f12_query = j3_f12_ctrl = j3_f12_data = 0;
+ 
+@@ -650,7 +685,7 @@
+ 			}
+ 			if (fd[5] == J3_RMI_F01) {
+ 				j3_f01_ctrl = (uint16_t)((page << 8) | fd[2]);
+-				f01_data = (uint16_t)((page << 8) | fd[3]);
++				j3_f01_data = (uint16_t)((page << 8) | fd[3]);
+ 			} else if (fd[5] == J3_RMI_F12 && (fd[4] & 7u)) {
+ 				j3_f12_query = (uint16_t)((page << 8) | fd[0]);
+ 				j3_f12_ctrl = (uint16_t)((page << 8) | fd[2]);
+@@ -658,7 +693,7 @@
+ 			}
+ 
+-			if (j3_f01_ctrl && f01_data &&
++			if (j3_f01_ctrl && j3_f01_data &&
+ 			    j3_f12_query && j3_f12_ctrl && j3_f12_data) {
+ 				uint8_t status = 0xffu;
+ 				uint8_t intr_status = 0;
+@@ -668,7 +703,7 @@
+ 				/* Match Samsung: wait up to 200 ms for F01 CRC-in-progress
+ 				 * (status code 0x06) to clear before touching F12. */
+ 				for (unsigned tries = 0; tries < 11; tries++) {
+-					if (!j3_rmi_read(f01_data, &status, 1)) {
++					if (!j3_rmi_read(j3_f01_data, &status, 1)) {
+ 						break;
+ 					}
+ 					if ((status & 0x0fu) != 0x06u) {
+@@ -689,7 +724,7 @@
+ 					return false;
+ 				}
+ 				/* Samsung clears/observes F01 interrupt status before F12 init. */
+-				if (!j3_rmi_read((uint16_t)(f01_data + 1u), &intr_status, 1)) {
++				if (!j3_rmi_read((uint16_t)(j3_f01_data + 1u), &intr_status, 1)) {
+ 					return false;
+ 				}
+ 
+@@ -827,6 +862,23 @@
+ static bool
+ j3_touch_frame(void)
+ {
++	static unsigned health_tick;
++	static bool logged_activity;
++
++	/*
++	 * F01 bit 7 means the sensor reset and lost its F12 configuration.
++	 * The Samsung driver reinitialises in that case.  Poll it cheaply so
++	 * lock/wake or panel power transitions cannot leave touch dead forever.
++	 */
++	if (++health_tick >= 25u) {
++		uint8_t status = 0;
++		health_tick = 0;
++		if (!j3_f01_data || !j3_rmi_read(j3_f01_data, &status, 1)) {
++			return false;
++		}
++		if ((status & 0x80u) && !(status & 0x40u)) {
++			printf("J3 INPUT: TD4100 reset/unconfigured status=%#x; reinitialising\n", status);
++			return false;
++		}
++	}
++
+ 	uint8_t frame[J3_TOUCH_POINTS * J3_TOUCH_STRIDE];
+ 	unsigned bytes = j3_touch_points * J3_TOUCH_STRIDE;
+ 	if (!bytes || bytes > sizeof(frame) ||
+@@ -850,6 +902,11 @@
+ 		if (down) {
+ 			j3_touch_x[i] = x;
+ 			j3_touch_y[i] = y;
++			if (!logged_activity) {
++				printf("J3 INPUT: TD4100 first contact slot=%u raw=%u,%u scaled=%d,%d status=%u\n",
++				    i, rawx, rawy, x, y, status);
++				logged_activity = true;
++			}
+ 		}
+ 		sweet_hid_touch((int)i, down, x, y);
+ 		j3_touch_down[i] = down;
