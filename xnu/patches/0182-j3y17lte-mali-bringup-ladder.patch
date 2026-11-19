@@ -1,0 +1,397 @@
+--- a/iokit/Kernel/arm/SweetFramebuffer.cpp
++++ b/iokit/Kernel/arm/SweetFramebuffer.cpp
+@@ -155,121 +155,279 @@
+ #define J3_MALI_SHADER_READY           0x140u
+ #define J3_MALI_TILER_READY            0x150u
+ #define J3_MALI_L2_READY               0x160u
+-
+-static uint32_t
+-j3_gpu_read(vm_offset_t base, uint32_t offset)
+-{
+-	return *(volatile uint32_t *)(base + offset);
+-}
+-
+-static void
+-j3_gpu_write(vm_offset_t base, uint32_t offset, uint32_t value)
+-{
+-	*(volatile uint32_t *)(base + offset) = value;
+-	__asm__ volatile("dsb sy" ::: "memory");
+-}
+-
+-static void
+-j3_gpu_rmw(vm_offset_t base, uint32_t offset, uint32_t mask, uint32_t value)
+-{
+-	uint32_t old = j3_gpu_read(base, offset);
+-	j3_gpu_write(base, offset, (old & ~mask) | (value & mask));
+-}
+-
+-static bool
+-j3_mali_probe(void)
+-{
+-	vm_offset_t cmuMif = ml_io_map(J3_CMU_MIF_PA, 0x1000);
+-	vm_offset_t pmu = ml_io_map(J3_PMU_ALIVE_PA, 0x5000);
+-	vm_offset_t sysreg = ml_io_map(J3_SYSREG_G3D_PA, 0x1000);
+-	vm_offset_t cmu = ml_io_map(J3_CMU_G3D_PA, 0x2000);
+-	if (!cmuMif || !pmu || !sysreg || !cmu) {
+-		IOLog("J3 GPU: MMIO map failed mif=%#lx pmu=%#lx sys=%#lx cmu=%#lx\n",
+-		    (unsigned long)cmuMif, (unsigned long)pmu,
+-		    (unsigned long)sysreg, (unsigned long)cmu);
+-		return false;
+-	}
+-
+-	uint32_t before = j3_gpu_read(pmu, J3_G3D_STATUS) & 0xfu;
+-	IOLog("J3 GPU: probe begin g3d_status=%#x mif_mux=%#x mif_gate=%#x local_mux=%#x bus=%#x apb=%#x\n",
+-	    before, j3_gpu_read(cmuMif, J3_MIF_G3D_MUX),
+-	    j3_gpu_read(cmuMif, J3_MIF_G3D_GATE),
+-	    j3_gpu_read(cmu, J3_G3D_MUX_USER),
+-	    j3_gpu_read(cmu, J3_G3D_CLK_BUS),
+-	    j3_gpu_read(cmu, J3_G3D_CLK_APB));
+-
+-	/* Open the top-level G3D clock path before requesting domain power. */
+-	j3_gpu_rmw(cmuMif, J3_MIF_G3D_MUX, (1u << 21), (1u << 21));
+-
+-	if (before != 0xfu) {
+-		j3_gpu_rmw(pmu, J3_G3D_CONFIGURATION, 0xfu, 0xfu);
+-		bool on = false;
+-		for (unsigned spin = 0; spin < 500000u; spin++) {
+-			if ((j3_gpu_read(pmu, J3_G3D_STATUS) & 0xfu) == 0xfu) {
+-				on = true;
+-				break;
+-			}
+-			__asm__ volatile("yield");
+-		}
+-		if (!on) {
+-			IOLog("J3 GPU: G3D power-on timeout config=%#x status=%#x\n",
+-			    j3_gpu_read(pmu, J3_G3D_CONFIGURATION),
+-			    j3_gpu_read(pmu, J3_G3D_STATUS));
+-			return false;
+-		}
+-	}
+-
+-	/* Match the public Exynos7570 G3D domain-on DRCG state. */
+-	j3_gpu_write(sysreg, 0x0200, 0xffffffffu);
+-	j3_gpu_write(sysreg, 0x0204, 0xffffffffu);
+-	j3_gpu_write(sysreg, 0x0208, 0xffffffffu);
+-
+-	/*
+-	 * Enable the vclk_g3d parent/core path: top gate, local G3D clock
+-	 * source, PPMU parent, GPU core, D0 async bridge and SYSREG path.
+-	 * Preserve all unrelated clock state.
+-	 */
+-	j3_gpu_rmw(cmuMif, J3_MIF_G3D_GATE, 1u, 1u);
+-	j3_gpu_rmw(cmu, J3_G3D_MUX_USER,
+-	    (1u << 21) | (1u << 12), (1u << 21) | (1u << 12));
+-	j3_gpu_rmw(cmu, J3_G3D_CLK_OSC, 0x3u, 0x3u);
+-	j3_gpu_rmw(cmu, J3_G3D_CLK_BUS, 0xc3u, 0xc3u);
+-	j3_gpu_rmw(cmu, J3_G3D_CLK_APB, 0x50u, 0x50u);
+-
+-	vm_offset_t mali = ml_io_map(J3_MALI_PA, 0x5000);
+-	if (!mali) {
+-		IOLog("J3 GPU: Mali MMIO map failed after G3D power-on\n");
+-		return false;
+-	}
+-
+-	uint32_t id = j3_gpu_read(mali, J3_MALI_GPU_ID);
+-	if (id == 0 || id == 0xffffffffu) {
+-		IOLog("J3 GPU: Mali ID invalid id=%#x g3d=%#x mux=%#x bus=%#x apb=%#x\n",
+-		    id, j3_gpu_read(pmu, J3_G3D_STATUS),
+-		    j3_gpu_read(cmu, J3_G3D_MUX_USER),
+-		    j3_gpu_read(cmu, J3_G3D_CLK_BUS),
+-		    j3_gpu_read(cmu, J3_G3D_CLK_APB));
+-		return false;
+-	}
+-
+-	IOLog("J3 GPU: Mali alive id=%#x l2=%#x core=%#x tiler=%#x mem=%#x mmu=%#x as=%#x js=%#x\n",
+-	    id, j3_gpu_read(mali, J3_MALI_L2_FEATURES),
+-	    j3_gpu_read(mali, J3_MALI_CORE_FEATURES),
+-	    j3_gpu_read(mali, J3_MALI_TILER_FEATURES),
+-	    j3_gpu_read(mali, J3_MALI_MEM_FEATURES),
+-	    j3_gpu_read(mali, J3_MALI_MMU_FEATURES),
+-	    j3_gpu_read(mali, J3_MALI_AS_PRESENT),
+-	    j3_gpu_read(mali, J3_MALI_JS_PRESENT));
+-	IOLog("J3 GPU: cores shader=%#x/%#x tiler=%#x/%#x l2=%#x/%#x status=%#x irq=%#x irqs job=282 mmu=283 gpu=281\n",
+-	    j3_gpu_read(mali, J3_MALI_SHADER_PRESENT),
+-	    j3_gpu_read(mali, J3_MALI_SHADER_READY),
+-	    j3_gpu_read(mali, J3_MALI_TILER_PRESENT),
+-	    j3_gpu_read(mali, J3_MALI_TILER_READY),
+-	    j3_gpu_read(mali, J3_MALI_L2_PRESENT),
+-	    j3_gpu_read(mali, J3_MALI_L2_READY),
+-	    j3_gpu_read(mali, J3_MALI_GPU_STATUS),
+-	    j3_gpu_read(mali, J3_MALI_GPU_IRQ_STATUS));
+-	return true;
++#define J3_MALI_SHADER_PWRON           0x180u
++#define J3_MALI_TILER_PWRON            0x190u
++#define J3_MALI_L2_PWRON               0x1a0u
++#define J3_MALI_SHADER_PWROFF          0x1c0u
++#define J3_MALI_L2_PWROFF              0x1e0u
++#define J3_MALI_SHADER_PWRTRANS        0x200u
++#define J3_MALI_TILER_PWRTRANS         0x210u
++#define J3_MALI_L2_PWRTRANS            0x220u
++
++#define J3_MALI_GPU_IRQ_RAWSTAT        0x020u
++#define J3_MALI_GPU_IRQ_CLEAR          0x024u
++#define J3_MALI_GPU_IRQ_MASK           0x028u
++#define J3_MALI_GPU_COMMAND            0x030u
++#define J3_MALI_RESET_COMPLETED        (1u << 8)
++#define J3_MALI_GPU_IRQ_KNOWN          0x00030181u
++#define J3_MALI_CMD_SOFT_RESET         0x01u
++#define J3_MALI_CMD_CYCLE_START        0x05u
++#define J3_MALI_CMD_CYCLE_STOP         0x06u
++#define J3_MALI_CYCLE_COUNT_LO         0x090u
++#define J3_MALI_CYCLE_COUNT_HI         0x094u
++#define J3_MALI_JS0_FEATURES           0x0c0u
++#define J3_MALI_JS1_FEATURES           0x0c4u
++#define J3_MALI_JS2_FEATURES           0x0c8u
++#define J3_MALI_JOB_IRQ_STATUS         0x100cu
++#define J3_MALI_MMU_IRQ_STATUS         0x200cu
++#define J3_MALI_AS0_STATUS             0x2428u
++#define J3_MALI_AS0_TRANSCFG           0x2430u
++
++static uint32_t
++j3_gpu_read(vm_offset_t base, uint32_t offset)
++{
++	return *(volatile uint32_t *)(base + offset);
++}
++
++static void
++j3_gpu_write(vm_offset_t base, uint32_t offset, uint32_t value)
++{
++	*(volatile uint32_t *)(base + offset) = value;
++	__asm__ volatile("dsb sy" ::: "memory");
++}
++
++static void
++j3_gpu_rmw(vm_offset_t base, uint32_t offset, uint32_t mask, uint32_t value)
++{
++	uint32_t old = j3_gpu_read(base, offset);
++	j3_gpu_write(base, offset, (old & ~mask) | (value & mask));
++}
++
++static bool
++j3_gpu_wait_mask(vm_offset_t base, uint32_t offset, uint32_t mask,
++    uint32_t want, unsigned spins)
++{
++	for (unsigned n = 0; n < spins; n++) {
++		if ((j3_gpu_read(base, offset) & mask) == want) {
++			return true;
++		}
++		__asm__ volatile("yield");
++	}
++	return false;
++}
++
++static uint64_t
++j3_gpu_read64(vm_offset_t base, uint32_t lo, uint32_t hi)
++{
++	uint32_t h1, h2, l;
++	do {
++		h1 = j3_gpu_read(base, hi);
++		l = j3_gpu_read(base, lo);
++		h2 = j3_gpu_read(base, hi);
++	} while (h1 != h2);
++	return ((uint64_t)h2 << 32) | l;
++}
++
++/*
++ * Credit-efficient validation ladder.  Every stage uses documented Midgard
++ * control registers and stops safely on failure.  No job descriptor or GPU
++ * virtual-memory mapping is attempted in this build.
++ */
++static bool
++j3_mali_validate_ladder(vm_offset_t mali)
++{
++	j3_gpu_write(mali, J3_MALI_GPU_IRQ_MASK, 0);
++	j3_gpu_write(mali, J3_MALI_GPU_IRQ_CLEAR, J3_MALI_GPU_IRQ_KNOWN);
++	j3_gpu_write(mali, J3_MALI_GPU_COMMAND, J3_MALI_CMD_SOFT_RESET);
++	if (!j3_gpu_wait_mask(mali, J3_MALI_GPU_IRQ_RAWSTAT,
++	    J3_MALI_RESET_COMPLETED, J3_MALI_RESET_COMPLETED, 1000000u)) {
++		IOLog("J3 GPU: ladder STOP reset timeout raw=%#x status=%#x\n",
++		    j3_gpu_read(mali, J3_MALI_GPU_IRQ_RAWSTAT),
++		    j3_gpu_read(mali, J3_MALI_GPU_STATUS));
++		return false;
++	}
++	j3_gpu_write(mali, J3_MALI_GPU_IRQ_CLEAR, J3_MALI_RESET_COMPLETED);
++	IOLog("J3 GPU: ladder 1/5 reset PASS id=%#x\n",
++	    j3_gpu_read(mali, J3_MALI_GPU_ID));
++
++	uint32_t shader = j3_gpu_read(mali, J3_MALI_SHADER_PRESENT);
++	uint32_t tiler = j3_gpu_read(mali, J3_MALI_TILER_PRESENT);
++	uint32_t l2 = j3_gpu_read(mali, J3_MALI_L2_PRESENT);
++	if (!shader || !tiler || !l2) {
++		IOLog("J3 GPU: ladder STOP invalid core masks shader=%#x tiler=%#x l2=%#x\n",
++		    shader, tiler, l2);
++		return false;
++	}
++
++	/* Powering the tiler brings L2 slice 0 with it; explicitly request any
++	 * additional L2 slices, matching the open Midgard PM state machine. */
++	j3_gpu_write(mali, J3_MALI_TILER_PWRON, tiler);
++	if (l2 & ~1u) {
++		j3_gpu_write(mali, J3_MALI_L2_PWRON, l2 & ~1u);
++	}
++	bool l2ok = j3_gpu_wait_mask(mali, J3_MALI_TILER_READY,
++	    tiler, tiler, 1000000u) &&
++	    j3_gpu_wait_mask(mali, J3_MALI_L2_READY, l2, l2, 1000000u);
++	if (!l2ok) {
++		IOLog("J3 GPU: ladder STOP L2/tiler on ready=%#x/%#x trans=%#x/%#x expected=%#x/%#x\n",
++		    j3_gpu_read(mali, J3_MALI_L2_READY),
++		    j3_gpu_read(mali, J3_MALI_TILER_READY),
++		    j3_gpu_read(mali, J3_MALI_L2_PWRTRANS),
++		    j3_gpu_read(mali, J3_MALI_TILER_PWRTRANS), l2, tiler);
++		return false;
++	}
++	IOLog("J3 GPU: ladder 2/5 L2+tiler PASS l2=%#x tiler=%#x\n", l2, tiler);
++
++	j3_gpu_write(mali, J3_MALI_SHADER_PWRON, shader);
++	if (!j3_gpu_wait_mask(mali, J3_MALI_SHADER_READY,
++	    shader, shader, 1000000u)) {
++		IOLog("J3 GPU: ladder STOP shaders on ready=%#x trans=%#x expected=%#x\n",
++		    j3_gpu_read(mali, J3_MALI_SHADER_READY),
++		    j3_gpu_read(mali, J3_MALI_SHADER_PWRTRANS), shader);
++		return false;
++	}
++	IOLog("J3 GPU: ladder 3/5 shaders PASS mask=%#x\n", shader);
++
++	j3_gpu_write(mali, J3_MALI_GPU_COMMAND, J3_MALI_CMD_CYCLE_START);
++	uint64_t c0 = j3_gpu_read64(mali, J3_MALI_CYCLE_COUNT_LO,
++	    J3_MALI_CYCLE_COUNT_HI);
++	for (unsigned n = 0; n < 50000u; n++) {
++		__asm__ volatile("yield");
++	}
++	uint64_t c1 = j3_gpu_read64(mali, J3_MALI_CYCLE_COUNT_LO,
++	    J3_MALI_CYCLE_COUNT_HI);
++	j3_gpu_write(mali, J3_MALI_GPU_COMMAND, J3_MALI_CMD_CYCLE_STOP);
++	if (c1 <= c0) {
++		IOLog("J3 GPU: ladder STOP cycle counter stalled start=%#llx end=%#llx\n",
++		    c0, c1);
++		return false;
++	}
++	IOLog("J3 GPU: ladder 4/5 clock PASS cycles=%llu\n", c1 - c0);
++
++	IOLog("J3 GPU: ladder caps js=%#x js0=%#x js1=%#x js2=%#x jobirq=%#x mmuirq=%#x as0_status=%#x as0_transcfg=%#x\n",
++	    j3_gpu_read(mali, J3_MALI_JS_PRESENT),
++	    j3_gpu_read(mali, J3_MALI_JS0_FEATURES),
++	    j3_gpu_read(mali, J3_MALI_JS1_FEATURES),
++	    j3_gpu_read(mali, J3_MALI_JS2_FEATURES),
++	    j3_gpu_read(mali, J3_MALI_JOB_IRQ_STATUS),
++	    j3_gpu_read(mali, J3_MALI_MMU_IRQ_STATUS),
++	    j3_gpu_read(mali, J3_MALI_AS0_STATUS),
++	    j3_gpu_read(mali, J3_MALI_AS0_TRANSCFG));
++	IOLog("J3 GPU: ladder 5/5 capability snapshot PASS\n");
++
++	/* Return to a low-power diagnostic state: shaders first, then L2.
++	 * The documented Midgard PM sequence powers the tiler down with L2. */
++	j3_gpu_write(mali, J3_MALI_SHADER_PWROFF, shader);
++	bool shaderOff = j3_gpu_wait_mask(mali, J3_MALI_SHADER_READY,
++	    shader, 0, 1000000u);
++	j3_gpu_write(mali, J3_MALI_L2_PWROFF, l2);
++	bool l2Off = j3_gpu_wait_mask(mali, J3_MALI_L2_READY,
++	    l2, 0, 1000000u);
++	bool tilerOff = j3_gpu_wait_mask(mali, J3_MALI_TILER_READY,
++	    tiler, 0, 1000000u);
++	IOLog("J3 GPU: ladder cleanup shaders=%s l2=%s tiler=%s ready=%#x/%#x/%#x\n",
++	    shaderOff ? "off" : "TIMEOUT", l2Off ? "off" : "TIMEOUT",
++	    tilerOff ? "off" : "TIMEOUT",
++	    j3_gpu_read(mali, J3_MALI_SHADER_READY),
++	    j3_gpu_read(mali, J3_MALI_L2_READY),
++	    j3_gpu_read(mali, J3_MALI_TILER_READY));
++	return true;
++}
++
++static bool
++j3_mali_probe(void)
++{
++	vm_offset_t cmuMif = ml_io_map(J3_CMU_MIF_PA, 0x1000);
++	vm_offset_t pmu = ml_io_map(J3_PMU_ALIVE_PA, 0x5000);
++	vm_offset_t sysreg = ml_io_map(J3_SYSREG_G3D_PA, 0x1000);
++	vm_offset_t cmu = ml_io_map(J3_CMU_G3D_PA, 0x2000);
++	if (!cmuMif || !pmu || !sysreg || !cmu) {
++		IOLog("J3 GPU: MMIO map failed mif=%#lx pmu=%#lx sys=%#lx cmu=%#lx\n",
++		    (unsigned long)cmuMif, (unsigned long)pmu,
++		    (unsigned long)sysreg, (unsigned long)cmu);
++		return false;
++	}
++
++	uint32_t before = j3_gpu_read(pmu, J3_G3D_STATUS) & 0xfu;
++	IOLog("J3 GPU: probe begin g3d_status=%#x mif_mux=%#x mif_gate=%#x local_mux=%#x bus=%#x apb=%#x\n",
++	    before, j3_gpu_read(cmuMif, J3_MIF_G3D_MUX),
++	    j3_gpu_read(cmuMif, J3_MIF_G3D_GATE),
++	    j3_gpu_read(cmu, J3_G3D_MUX_USER),
++	    j3_gpu_read(cmu, J3_G3D_CLK_BUS),
++	    j3_gpu_read(cmu, J3_G3D_CLK_APB));
++
++	/* Open the top-level G3D clock path before requesting domain power. */
++	j3_gpu_rmw(cmuMif, J3_MIF_G3D_MUX, (1u << 21), (1u << 21));
++
++	if (before != 0xfu) {
++		j3_gpu_rmw(pmu, J3_G3D_CONFIGURATION, 0xfu, 0xfu);
++		bool on = false;
++		for (unsigned spin = 0; spin < 500000u; spin++) {
++			if ((j3_gpu_read(pmu, J3_G3D_STATUS) & 0xfu) == 0xfu) {
++				on = true;
++				break;
++			}
++			__asm__ volatile("yield");
++		}
++		if (!on) {
++			IOLog("J3 GPU: G3D power-on timeout config=%#x status=%#x\n",
++			    j3_gpu_read(pmu, J3_G3D_CONFIGURATION),
++			    j3_gpu_read(pmu, J3_G3D_STATUS));
++			return false;
++		}
++	}
++
++	/* Match the public Exynos7570 G3D domain-on DRCG state. */
++	j3_gpu_write(sysreg, 0x0200, 0xffffffffu);
++	j3_gpu_write(sysreg, 0x0204, 0xffffffffu);
++	j3_gpu_write(sysreg, 0x0208, 0xffffffffu);
++
++	/*
++	 * Enable the vclk_g3d parent/core path: top gate, local G3D clock
++	 * source, PPMU parent, GPU core, D0 async bridge and SYSREG path.
++	 * Preserve all unrelated clock state.
++	 */
++	j3_gpu_rmw(cmuMif, J3_MIF_G3D_GATE, 1u, 1u);
++	j3_gpu_rmw(cmu, J3_G3D_MUX_USER,
++	    (1u << 21) | (1u << 12), (1u << 21) | (1u << 12));
++	j3_gpu_rmw(cmu, J3_G3D_CLK_OSC, 0x3u, 0x3u);
++	j3_gpu_rmw(cmu, J3_G3D_CLK_BUS, 0xc3u, 0xc3u);
++	j3_gpu_rmw(cmu, J3_G3D_CLK_APB, 0x50u, 0x50u);
++
++	vm_offset_t mali = ml_io_map(J3_MALI_PA, 0x5000);
++	if (!mali) {
++		IOLog("J3 GPU: Mali MMIO map failed after G3D power-on\n");
++		return false;
++	}
++
++	uint32_t id = j3_gpu_read(mali, J3_MALI_GPU_ID);
++	if (id == 0 || id == 0xffffffffu) {
++		IOLog("J3 GPU: Mali ID invalid id=%#x g3d=%#x mux=%#x bus=%#x apb=%#x\n",
++		    id, j3_gpu_read(pmu, J3_G3D_STATUS),
++		    j3_gpu_read(cmu, J3_G3D_MUX_USER),
++		    j3_gpu_read(cmu, J3_G3D_CLK_BUS),
++		    j3_gpu_read(cmu, J3_G3D_CLK_APB));
++		return false;
++	}
++
++	IOLog("J3 GPU: Mali alive id=%#x l2=%#x core=%#x tiler=%#x mem=%#x mmu=%#x as=%#x js=%#x\n",
++	    id, j3_gpu_read(mali, J3_MALI_L2_FEATURES),
++	    j3_gpu_read(mali, J3_MALI_CORE_FEATURES),
++	    j3_gpu_read(mali, J3_MALI_TILER_FEATURES),
++	    j3_gpu_read(mali, J3_MALI_MEM_FEATURES),
++	    j3_gpu_read(mali, J3_MALI_MMU_FEATURES),
++	    j3_gpu_read(mali, J3_MALI_AS_PRESENT),
++	    j3_gpu_read(mali, J3_MALI_JS_PRESENT));
++	IOLog("J3 GPU: cores shader=%#x/%#x tiler=%#x/%#x l2=%#x/%#x status=%#x irq=%#x irqs job=282 mmu=283 gpu=281\n",
++	    j3_gpu_read(mali, J3_MALI_SHADER_PRESENT),
++	    j3_gpu_read(mali, J3_MALI_SHADER_READY),
++	    j3_gpu_read(mali, J3_MALI_TILER_PRESENT),
++	    j3_gpu_read(mali, J3_MALI_TILER_READY),
++	    j3_gpu_read(mali, J3_MALI_L2_PRESENT),
++	    j3_gpu_read(mali, J3_MALI_L2_READY),
++	    j3_gpu_read(mali, J3_MALI_GPU_STATUS),
++	    j3_gpu_read(mali, J3_MALI_GPU_IRQ_STATUS));
++	return j3_mali_validate_ladder(mali);
+ }
+ #endif
+ 
