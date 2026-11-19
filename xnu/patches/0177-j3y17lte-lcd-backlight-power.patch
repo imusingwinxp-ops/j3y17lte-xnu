@@ -1,6 +1,6 @@
 --- a/iokit/Kernel/arm/SweetFramebuffer.cpp
 +++ b/iokit/Kernel/arm/SweetFramebuffer.cpp
-@@ -40,6 +40,58 @@
+@@ -40,6 +40,66 @@
  
  extern "C" int sweet_console_muted;     /* osfmk/console/serial_console.c */
  
@@ -67,7 +67,7 @@
  #if defined(ARM64_BOARD_CONFIG_SWEET) || defined(ARM64_BOARD_CONFIG_J3Y17LTE)
  #include <IOKit/IOService.h>
  #include <IOKit/IOUserClient.h>
-@@ -234,6 +286,13 @@
+@@ -234,6 +294,13 @@
  					row[x] = step < 6 ? (row[x] >> 1) & 0x7f7f7f7f : 0;
  				}
  			}
@@ -81,7 +81,7 @@
  		}
  		sender->setTimeoutUS(SWEET_FB_VSYNC_US);
  		return;
-@@ -536,14 +595,23 @@
+@@ -536,14 +603,23 @@
  		break;
  	case kSweetFBRequestPowerChange:
  		if (args->scalarInputCount >= 1) {
