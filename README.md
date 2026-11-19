@@ -12,7 +12,7 @@ This is a research project exploring XNU kernel compatibility on low end ARMv8-A
 
 Please note that the latest build may not always be stable, and your own IPSW file needs to be obtained. Additionally, you must compile the kernel yourself in Linux or MacOS, XCode 16.4, due to legal obligations.
 
-Stability status for latest build: UNSTABLE!!! Please wait for a newer stable build, or use the latest stable build.
+Stability status for latest build: Somewhat Stable. Please wait for a newer stable build, or use the latest stable build.
 
 Images:
 <img width="1152" height="2048" alt="WhatsApp Image 2026-11-08 at 23 14 04" src="https://github.com/user-attachments/assets/fc421f44-5c9b-46e1-aa58-5c93b1134367" />
