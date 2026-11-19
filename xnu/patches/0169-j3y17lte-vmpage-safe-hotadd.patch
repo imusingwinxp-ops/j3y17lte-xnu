@@ -1,0 +1,57 @@
+--- a/osfmk/vm/vm_init.c
++++ b/osfmk/vm/vm_init.c
+@@ -102,6 +102,7 @@
+ extern uint64_t max_mem;
+ extern uint64_t max_mem_actual;
+ extern uint64_t sane_size;
++extern unsigned int vm_pages_count;
+ extern vm_map_address_t j3y17lte_bank1_direct_base;
+ extern vm_map_address_t j3y17lte_pmap_map_ram_bd(
+ 	vm_map_address_t virt, vm_offset_t start, vm_offset_t end,
+@@ -113,6 +114,7 @@
+ {
+ 	vm_offset_t va = 0;
+ 	kern_return_t kr;
+ 	pmap_paddr_t hotadd_start = J3_BANK1_START;
++	pmap_paddr_t vm_pages_end_pa;
+ 
+ 	kprintf("J3 RAM: late bank1 begin lower=%llu MiB first=%#llx last=%#llx\n",
+ 	    (uint64_t)(max_mem >> 20), (uint64_t)vm_first_phys,
+@@ -149,14 +151,31 @@
+ 	j3y17lte_upper_pmap_ready = true;
+ 	__asm__ volatile("dsb sy" ::: "memory");
+ 
+ 	/*
+-	 * Never pass pages already owned by the loader/VM to vm_page_create()
+-	 * a second time.  vm_last_phys is the loader-managed pmap end captured
+-	 * during the proven lower-memory bootstrap.
++	 * Never pass a physical page to vm_page_create() if ARM64's original
++	 * linear vm_pages[] array already has a descriptor for it.
++	 *
++	 * On ARM64 VM_PAGE_GET_PHYS_PAGE() derives an in-array page number as
++	 * vm_first_phys_ppnum + array_index.  vm_last_phys is a pmap geometry
++	 * bound and is not, by itself, the authoritative end of vm_page
++	 * descriptor ownership.  Using only vm_last_phys can therefore create
++	 * a second vm_page descriptor for the same physical page; that can run
++	 * for a while and later corrupt VM state when both aliases are reused.
+ 	 */
++	vm_pages_end_pa = ptoa((ppnum_t)
++	    ((uint64_t)vm_first_phys_ppnum + (uint64_t)vm_pages_count));
++	kprintf("J3 RAM: existing vm_pages=[%#llx,%#llx) count=%u pmap_last=%#llx\n",
++	    (uint64_t)ptoa(vm_first_phys_ppnum), (uint64_t)vm_pages_end_pa,
++	    vm_pages_count, (uint64_t)vm_last_phys);
++
+ 	if (vm_last_phys > hotadd_start) {
+ 		hotadd_start = vm_last_phys;
+-		if (hotadd_start > J3_BANK1_END) {
+-			hotadd_start = J3_BANK1_END;
+-		}
++	}
++	if (vm_pages_end_pa > hotadd_start) {
++		hotadd_start = vm_pages_end_pa;
++	}
++	if (hotadd_start > J3_BANK1_END) {
++		hotadd_start = J3_BANK1_END;
+ 	}
+ 	const vm_size_t hotadd_size = J3_BANK1_END - hotadd_start;
+ 	kprintf("J3 RAM: loader end=%#llx add=[%#llx,%#llx) size=%llu MiB\n",
