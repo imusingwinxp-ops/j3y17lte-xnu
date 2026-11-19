@@ -1,0 +1,56 @@
+--- a/bsd/dev/j3y17lte_input.c
++++ b/bsd/dev/j3y17lte_input.c
+@@ -806,26 +806,33 @@
+ 		    ctrl23[0], j3_touch_points);
+ 	}
+ 
+-	uint8_t q8_size = 0;
+-	uint8_t q8[3] = {0, 0, 0};
+-	if (!j3_rmi_read((uint16_t)(j3_f12_query + 7), &q8_size, 1)) {
+-		printf("J3 INPUT: TD4100 setup fail q8 size read\n");
+-		return false;
+-	}
+-	if (q8_size < 2 || q8_size > sizeof(q8)) {
+-		printf("J3 INPUT: TD4100 setup fail q8 size=%u\n", q8_size);
+-		return false;
+-	}
+-	if (!j3_rmi_read((uint16_t)(j3_f12_query + 8), q8, q8_size)) {
+-		printf("J3 INPUT: TD4100 setup fail q8 read size=%u\n", q8_size);
+-		return false;
+-	}
+-	if (!(q8[1] & 0x02u)) {
+-		printf("J3 INPUT: TD4100 setup fail F12 Data1 absent q8=%02x:%02x:%02x\n",
+-		    q8[0], q8[1], q8[2]);
+-		return false;
+-	}
+-	j3_f12_data1 = (uint16_t)(j3_f12_data + ((q8[1] & 0x01u) ? 1u : 0u));
++	uint8_t q8_size = 0;
++	/*
++	 * The J3's TD4100 reports Query8 size 4.  Samsung trusts the controller's
++	 * reported size; keep a bounded local buffer rather than rejecting >3.
++	 * Data0/Data1 presence still lives in q8[1].
++	 */
++	uint8_t q8[8] = {0};
++	if (!j3_rmi_read((uint16_t)(j3_f12_query + 7), &q8_size, 1)) {
++		printf("J3 INPUT: TD4100 setup fail q8 size read\n");
++		return false;
++	}
++	if (q8_size < 2 || q8_size > sizeof(q8)) {
++		printf("J3 INPUT: TD4100 setup fail q8 unsupported size=%u\n", q8_size);
++		return false;
++	}
++	if (!j3_rmi_read((uint16_t)(j3_f12_query + 8), q8, q8_size)) {
++		printf("J3 INPUT: TD4100 setup fail q8 read size=%u\n", q8_size);
++		return false;
++	}
++	printf("J3 INPUT: TD4100 q8 size=%u data=%02x:%02x:%02x:%02x\n",
++	    q8_size, q8[0], q8[1], q8[2], q8[3]);
++	if (!(q8[1] & 0x02u)) {
++		printf("J3 INPUT: TD4100 setup fail F12 Data1 absent q8=%02x:%02x:%02x:%02x\n",
++		    q8[0], q8[1], q8[2], q8[3]);
++		return false;
++	}
++	j3_f12_data1 = (uint16_t)(j3_f12_data + ((q8[1] & 0x01u) ? 1u : 0u));
+ 
+ 	uint8_t q10 = 0;
+ 	if (!j3_rmi_read((uint16_t)(j3_f12_query + 10), &q10, 1)) {
