@@ -1,0 +1,31 @@
+--- a/osfmk/vm/vm_init.c
++++ b/osfmk/vm/vm_init.c
+@@ -102,7 +102,8 @@
+ extern uint64_t max_mem_actual;
+ extern uint64_t sane_size;
+ extern unsigned int vm_pages_count;
++extern vm_offset_t first_avail;
+ extern vm_map_address_t j3y17lte_bank1_direct_base;
+ extern vm_map_address_t j3y17lte_pmap_map_ram_bd(
+ 	vm_map_address_t virt, vm_offset_t start, vm_offset_t end,
+@@ -175,6 +176,19 @@
+ 	if (vm_pages_end_pa > hotadd_start) {
+ 		hotadd_start = vm_pages_end_pa;
+ 	}
++
++	/*
++	 * first_avail is the physical boundary ARM64 establishes after
++	 * topOfKernelData plus bootstrap page-table allocations.  Pages below it
++	 * can still contain the live kernel/boot image or can later be returned by
++	 * arm_vm_prot_finalize() through ml_static_mfree(), which itself calls
++	 * vm_page_create().  Bulk-adding those pages here would make them
++	 * allocatable too early and/or create them twice later in boot.
++	 */
++	if ((pmap_paddr_t)first_avail > hotadd_start) {
++		hotadd_start = (pmap_paddr_t)first_avail;
++	}
++	kprintf("J3 RAM: reserve first_avail=%#llx hotadd_start=%#llx\n",
++	    (uint64_t)first_avail, (uint64_t)hotadd_start);
+ 	if (hotadd_start > J3_BANK1_END) {
+ 		hotadd_start = J3_BANK1_END;
+ 	}
