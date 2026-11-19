@@ -1,0 +1,204 @@
+--- a/iokit/Kernel/arm/SweetFramebuffer.cpp
++++ b/iokit/Kernel/arm/SweetFramebuffer.cpp
+@@ -62,10 +62,171 @@
+ #define J3_DCS_BRIGHTNESS              0x51u
+ #define J3_WAKE_BRIGHTNESS             0xa5u
+ 
+-static vm_offset_t gJ3Dsim0;
+-
+-static bool
+-j3_set_panel_brightness(uint8_t level)
++static vm_offset_t gJ3Dsim0;
++
++/*
++ * J3Y17LTE Mali bring-up, phase 1.
++ *
++ * This is intentionally a read-mostly probe after a minimal Exynos7570
++ * power/clock enable sequence.  It does not submit Mali jobs, program the
++ * Mali MMU, or alter the DECON scanout path.  Every failure is fail-soft so
++ * the proven CPU-copy framebuffer remains usable.
++ *
++ * Register addresses/bit positions are hardware facts from the public
++ * Exynos7570 device tree and clock/power descriptions.  This implementation
++ * is independently written for XNU.
++ */
++#define J3_MALI_PA                     0x11400000u
++#define J3_CMU_MIF_PA                  0x10460000u
++#define J3_SYSREG_G3D_PA               0x11450000u
++#define J3_CMU_G3D_PA                  0x11460000u
++#define J3_PMU_ALIVE_PA                0x11c80000u
++
++#define J3_MIF_G3D_MUX                 0x0228u
++#define J3_MIF_G3D_GATE                0x0830u
++#define J3_G3D_CONFIGURATION           0x4000u
++#define J3_G3D_STATUS                  0x4004u
++#define J3_G3D_MUX_USER                0x0204u
++#define J3_G3D_CLK_OSC                 0x0800u
++#define J3_G3D_CLK_BUS                 0x0804u
++#define J3_G3D_CLK_APB                 0x0808u
++
++#define J3_MALI_GPU_ID                 0x000u
++#define J3_MALI_L2_FEATURES            0x004u
++#define J3_MALI_CORE_FEATURES          0x008u
++#define J3_MALI_TILER_FEATURES         0x00cu
++#define J3_MALI_MEM_FEATURES           0x010u
++#define J3_MALI_MMU_FEATURES           0x014u
++#define J3_MALI_AS_PRESENT             0x018u
++#define J3_MALI_JS_PRESENT             0x01cu
++#define J3_MALI_GPU_IRQ_STATUS         0x02cu
++#define J3_MALI_GPU_STATUS             0x034u
++#define J3_MALI_SHADER_PRESENT         0x100u
++#define J3_MALI_TILER_PRESENT          0x110u
++#define J3_MALI_L2_PRESENT             0x120u
++#define J3_MALI_SHADER_READY           0x140u
++#define J3_MALI_TILER_READY            0x150u
++#define J3_MALI_L2_READY               0x160u
++
++static uint32_t
++j3_gpu_read(vm_offset_t base, uint32_t offset)
++{
++	return *(volatile uint32_t *)(base + offset);
++}
++
++static void
++j3_gpu_write(vm_offset_t base, uint32_t offset, uint32_t value)
++{
++	*(volatile uint32_t *)(base + offset) = value;
++	__asm__ volatile("dsb sy" ::: "memory");
++}
++
++static void
++j3_gpu_rmw(vm_offset_t base, uint32_t offset, uint32_t mask, uint32_t value)
++{
++	uint32_t old = j3_gpu_read(base, offset);
++	j3_gpu_write(base, offset, (old & ~mask) | (value & mask));
++}
++
++static bool
++j3_mali_probe(void)
++{
++	vm_offset_t cmuMif = ml_io_map(J3_CMU_MIF_PA, 0x1000);
++	vm_offset_t pmu = ml_io_map(J3_PMU_ALIVE_PA, 0x5000);
++	vm_offset_t sysreg = ml_io_map(J3_SYSREG_G3D_PA, 0x1000);
++	vm_offset_t cmu = ml_io_map(J3_CMU_G3D_PA, 0x2000);
++	if (!cmuMif || !pmu || !sysreg || !cmu) {
++		IOLog("J3 GPU: MMIO map failed mif=%#lx pmu=%#lx sys=%#lx cmu=%#lx\n",
++		    (unsigned long)cmuMif, (unsigned long)pmu,
++		    (unsigned long)sysreg, (unsigned long)cmu);
++		return false;
++	}
++
++	uint32_t before = j3_gpu_read(pmu, J3_G3D_STATUS) & 0xfu;
++	IOLog("J3 GPU: probe begin g3d_status=%#x mif_mux=%#x mif_gate=%#x local_mux=%#x bus=%#x apb=%#x\n",
++	    before, j3_gpu_read(cmuMif, J3_MIF_G3D_MUX),
++	    j3_gpu_read(cmuMif, J3_MIF_G3D_GATE),
++	    j3_gpu_read(cmu, J3_G3D_MUX_USER),
++	    j3_gpu_read(cmu, J3_G3D_CLK_BUS),
++	    j3_gpu_read(cmu, J3_G3D_CLK_APB));
++
++	/* Open the top-level G3D clock path before requesting domain power. */
++	j3_gpu_rmw(cmuMif, J3_MIF_G3D_MUX, (1u << 21), (1u << 21));
++
++	if (before != 0xfu) {
++		j3_gpu_rmw(pmu, J3_G3D_CONFIGURATION, 0xfu, 0xfu);
++		bool on = false;
++		for (unsigned spin = 0; spin < 500000u; spin++) {
++			if ((j3_gpu_read(pmu, J3_G3D_STATUS) & 0xfu) == 0xfu) {
++				on = true;
++				break;
++			}
++			__asm__ volatile("yield");
++		}
++		if (!on) {
++			IOLog("J3 GPU: G3D power-on timeout config=%#x status=%#x\n",
++			    j3_gpu_read(pmu, J3_G3D_CONFIGURATION),
++			    j3_gpu_read(pmu, J3_G3D_STATUS));
++			return false;
++		}
++	}
++
++	/* Public Exynos7570 G3D-on sequence enables dynamic clock gating. */
++	j3_gpu_write(sysreg, 0x0200, 0xffffffffu);
++	j3_gpu_write(sysreg, 0x0204, 0xffffffffu);
++	j3_gpu_write(sysreg, 0x0208, 0xffffffffu);
++
++	/*
++	 * Enable the same parent/child clock groups used by vclk_g3d:
++	 * PPMU parent plus GPU core, D0 async bridge and SYSREG path.
++	 * Preserve all unrelated gate state.
++	 */
++	j3_gpu_rmw(cmuMif, J3_MIF_G3D_GATE, 1u, 1u);
++	j3_gpu_rmw(cmu, J3_G3D_MUX_USER,
++	    (1u << 21) | (1u << 12), (1u << 21) | (1u << 12));
++	j3_gpu_rmw(cmu, J3_G3D_CLK_OSC, 0x3u, 0x3u);
++	j3_gpu_rmw(cmu, J3_G3D_CLK_BUS, 0xc3u, 0xc3u);
++	j3_gpu_rmw(cmu, J3_G3D_CLK_APB, 0x50u, 0x50u);
++
++	vm_offset_t mali = ml_io_map(J3_MALI_PA, 0x5000);
++	if (!mali) {
++		IOLog("J3 GPU: Mali MMIO map failed after G3D power-on\n");
++		return false;
++	}
++
++	uint32_t id = j3_gpu_read(mali, J3_MALI_GPU_ID);
++	if (id == 0 || id == 0xffffffffu) {
++		IOLog("J3 GPU: Mali ID invalid id=%#x g3d=%#x mux=%#x bus=%#x apb=%#x\n",
++		    id, j3_gpu_read(pmu, J3_G3D_STATUS),
++		    j3_gpu_read(cmu, J3_G3D_MUX_USER),
++		    j3_gpu_read(cmu, J3_G3D_CLK_BUS),
++		    j3_gpu_read(cmu, J3_G3D_CLK_APB));
++		return false;
++	}
++
++	IOLog("J3 GPU: Mali alive id=%#x l2=%#x core=%#x tiler=%#x mem=%#x mmu=%#x as=%#x js=%#x\n",
++	    id,
++	    j3_gpu_read(mali, J3_MALI_L2_FEATURES),
++	    j3_gpu_read(mali, J3_MALI_CORE_FEATURES),
++	    j3_gpu_read(mali, J3_MALI_TILER_FEATURES),
++	    j3_gpu_read(mali, J3_MALI_MEM_FEATURES),
++	    j3_gpu_read(mali, J3_MALI_MMU_FEATURES),
++	    j3_gpu_read(mali, J3_MALI_AS_PRESENT),
++	    j3_gpu_read(mali, J3_MALI_JS_PRESENT));
++	IOLog("J3 GPU: cores shader=%#x/%#x tiler=%#x/%#x l2=%#x/%#x status=%#x irq=%#x irqs job=282 mmu=283 gpu=281\n",
++	    j3_gpu_read(mali, J3_MALI_SHADER_PRESENT),
++	    j3_gpu_read(mali, J3_MALI_SHADER_READY),
++	    j3_gpu_read(mali, J3_MALI_TILER_PRESENT),
++	    j3_gpu_read(mali, J3_MALI_TILER_READY),
++	    j3_gpu_read(mali, J3_MALI_L2_PRESENT),
++	    j3_gpu_read(mali, J3_MALI_L2_READY),
++	    j3_gpu_read(mali, J3_MALI_GPU_STATUS),
++	    j3_gpu_read(mali, J3_MALI_GPU_IRQ_STATUS));
++	return true;
++}
++
++static bool
++j3_set_panel_brightness(uint8_t level)
+ {
+ 	if (!gJ3Dsim0) {
+ 		gJ3Dsim0 = ml_io_map(J3_DSIM0_PA, 0x1000);
+@@ -218,10 +379,21 @@
+ {
+ 	PE_Video video;
+ 
+-	if (!IOService::start(provider)) {
+-		return false;
+-	}
+-	PE_current_console(&video);
++	if (!IOService::start(provider)) {
++		return false;
++	}
++#if defined(ARM64_BOARD_CONFIG_J3Y17LTE)
++	int gpuProbe = 1;
++	PE_parse_boot_argn("j3gpu_probe", &gpuProbe, sizeof(gpuProbe));
++	if (gpuProbe != 0) {
++		bool gpuOK = j3_mali_probe();
++		IOLog("J3 GPU: phase1 probe %s; framebuffer fallback remains active\n",
++		    gpuOK ? "PASS" : "FAILED");
++	} else {
++		IOLog("J3 GPU: phase1 probe disabled by j3gpu_probe=0\n");
++	}
++#endif
++	PE_current_console(&video);
+ #if defined(ARM64_BOARD_CONFIG_J3Y17LTE)
+ 	/* The J3 loader's live Exynos7570 DECON scanout is 720x1280 XRGB8888.
+ 	 * boot_args.Video is not populated, but the J3 framebuffer console
