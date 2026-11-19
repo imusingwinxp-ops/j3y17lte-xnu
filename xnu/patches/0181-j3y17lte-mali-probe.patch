@@ -1,26 +1,26 @@
 --- a/iokit/Kernel/arm/SweetFramebuffer.cpp
 +++ b/iokit/Kernel/arm/SweetFramebuffer.cpp
-@@ -62,10 +62,171 @@
- #define J3_DCS_BRIGHTNESS              0x51u
- #define J3_WAKE_BRIGHTNESS             0xa5u
- 
--static vm_offset_t gJ3Dsim0;
+@@ -109,9 +109,171 @@
+ #include <IOKit/system.h>
+ #include <pexpert/pexpert.h>
+ #include <kern/clock.h>
+-#include <sys/proc.h>
 -
--static bool
--j3_set_panel_brightness(uint8_t level)
-+static vm_offset_t gJ3Dsim0;
+-enum {
++#include <sys/proc.h>
 +
++#if defined(ARM64_BOARD_CONFIG_J3Y17LTE)
 +/*
 + * J3Y17LTE Mali bring-up, phase 1.
 + *
 + * This is intentionally a read-mostly probe after a minimal Exynos7570
-+ * power/clock enable sequence.  It does not submit Mali jobs, program the
-+ * Mali MMU, or alter the DECON scanout path.  Every failure is fail-soft so
++ * power/clock enable sequence. It does not submit Mali jobs, program the
++ * Mali MMU, or alter the DECON scanout path. Every failure is fail-soft so
 + * the proven CPU-copy framebuffer remains usable.
 + *
-+ * Register addresses/bit positions are hardware facts from the public
-+ * Exynos7570 device tree and clock/power descriptions.  This implementation
-+ * is independently written for XNU.
++ * Register addresses/bit positions are hardware facts from public
++ * Exynos7570 hardware descriptions. This implementation is independently
++ * written for XNU.
 + */
 +#define J3_MALI_PA                     0x11400000u
 +#define J3_CMU_MIF_PA                  0x10460000u
@@ -117,15 +117,15 @@
 +		}
 +	}
 +
-+	/* Public Exynos7570 G3D-on sequence enables dynamic clock gating. */
++	/* Match the public Exynos7570 G3D domain-on DRCG state. */
 +	j3_gpu_write(sysreg, 0x0200, 0xffffffffu);
 +	j3_gpu_write(sysreg, 0x0204, 0xffffffffu);
 +	j3_gpu_write(sysreg, 0x0208, 0xffffffffu);
 +
 +	/*
-+	 * Enable the same parent/child clock groups used by vclk_g3d:
-+	 * PPMU parent plus GPU core, D0 async bridge and SYSREG path.
-+	 * Preserve all unrelated gate state.
++	 * Enable the vclk_g3d parent/core path: top gate, local G3D clock
++	 * source, PPMU parent, GPU core, D0 async bridge and SYSREG path.
++	 * Preserve all unrelated clock state.
 +	 */
 +	j3_gpu_rmw(cmuMif, J3_MIF_G3D_GATE, 1u, 1u);
 +	j3_gpu_rmw(cmu, J3_G3D_MUX_USER,
@@ -151,8 +151,7 @@
 +	}
 +
 +	IOLog("J3 GPU: Mali alive id=%#x l2=%#x core=%#x tiler=%#x mem=%#x mmu=%#x as=%#x js=%#x\n",
-+	    id,
-+	    j3_gpu_read(mali, J3_MALI_L2_FEATURES),
++	    id, j3_gpu_read(mali, J3_MALI_L2_FEATURES),
 +	    j3_gpu_read(mali, J3_MALI_CORE_FEATURES),
 +	    j3_gpu_read(mali, J3_MALI_TILER_FEATURES),
 +	    j3_gpu_read(mali, J3_MALI_MEM_FEATURES),
@@ -170,13 +169,13 @@
 +	    j3_gpu_read(mali, J3_MALI_GPU_IRQ_STATUS));
 +	return true;
 +}
++#endif
 +
-+static bool
-+j3_set_panel_brightness(uint8_t level)
- {
- 	if (!gJ3Dsim0) {
- 		gJ3Dsim0 = ml_io_map(J3_DSIM0_PA, 0x1000);
-@@ -218,10 +379,21 @@
++enum {
+ 	kSweetFBGetLayerDefaultSurface  = 3,
+ 	kSweetFBSwapBegin               = 4,
+ 	kSweetFBSwapEnd                 = 5,
+@@ -218,10 +380,21 @@
  {
  	PE_Video video;
  
