@@ -1,0 +1,270 @@
+--- a/bsd/dev/j3y17lte_input.c
++++ b/bsd/dev/j3y17lte_input.c
+@@ -743,92 +743,181 @@
+ 	return false;
+ }
+ 
+-static bool
+-j3_touch_setup(void)
+-{
+-	if (!j3_touch_bus_ready) {
+-		j3_touch_bus_ready = j3_touch_select_pins();
+-		if (!j3_touch_bus_ready) {
+-			return false;
+-		}
+-	}
+-	if (!j3_rmi_discover()) {
+-		return false;
+-	}
+-
+-	uint8_t q5[5];
+-	if (!j3_rmi_read((uint16_t)(j3_f12_query + 5), q5, sizeof(q5))) {
+-		return false;
+-	}
+-	if (!(q5[3] & 0x80u) || !(q5[4] & 0x10u)) {
+-		printf("J3 INPUT: TD4100 F12 missing ctrl23/28 q5=%02x:%02x:%02x:%02x:%02x\n",
+-		    q5[0], q5[1], q5[2], q5[3], q5[4]);
+-		return false;
+-	}
+-
+-	unsigned ctrl8_off = j3_pop8(q5[1]);
+-	unsigned ctrl23_off = j3_pop8(q5[1]) + j3_pop8(q5[2]) +
+-	    j3_pop8((uint8_t)(q5[3] & 0x7fu));
+-	unsigned ctrl28_off = j3_pop8(q5[1]) + j3_pop8(q5[2]) +
+-	    j3_pop8(q5[3]) + j3_pop8((uint8_t)(q5[4] & 0x0fu));
+-
+-	uint8_t ctrl23[2];
+-	if (!j3_rmi_read((uint16_t)(j3_f12_ctrl + ctrl23_off),
+-	    ctrl23, sizeof(ctrl23))) {
+-		return false;
+-	}
+-	uint8_t obj = (uint8_t)(ctrl23[0] | 1u);
+-	if (obj != ctrl23[0] &&
+-	    !j3_rmi_write((uint16_t)(j3_f12_ctrl + ctrl23_off), &obj, 1)) {
+-		return false;
+-	}
+-	j3_touch_points = ctrl23[1] ? ctrl23[1] : J3_TOUCH_POINTS;
+-	if (j3_touch_points > J3_TOUCH_POINTS) {
+-		j3_touch_points = J3_TOUCH_POINTS;
+-	}
+-
+-	uint8_t report = J3_RMI_REPORT_ENABLE;
+-	if (!j3_rmi_write((uint16_t)(j3_f12_ctrl + ctrl28_off), &report, 1)) {
+-		return false;
+-	}
+-
+-	uint8_t q8_size;
+-	uint8_t q8[3] = {0, 0, 0};
+-	if (!j3_rmi_read((uint16_t)(j3_f12_query + 7), &q8_size, 1) ||
+-	    q8_size < 2 || q8_size > sizeof(q8) ||
+-	    !j3_rmi_read((uint16_t)(j3_f12_query + 8), q8, q8_size) ||
+-	    !(q8[1] & 0x02u)) {
+-		return false;
+-	}
+-	j3_f12_data1 = (uint16_t)(j3_f12_data + ((q8[1] & 0x01u) ? 1u : 0u));
+-
+-	uint8_t geometry[4];
+-	if (j3_rmi_read((uint16_t)(j3_f12_ctrl + ctrl8_off),
+-	    geometry, sizeof(geometry))) {
+-		unsigned maxx = (unsigned)geometry[0] | ((unsigned)geometry[1] << 8);
+-		unsigned maxy = (unsigned)geometry[2] | ((unsigned)geometry[3] << 8);
+-		if (maxx >= 700 && maxx < 2048) {
+-			j3_touch_max_x = maxx;
+-		}
+-		if (maxy >= 1200 && maxy < 4096) {
+-			j3_touch_max_y = maxy;
+-		}
+-	}
+-
+-	uint8_t f01;
+-	if (!j3_rmi_read(j3_f01_ctrl, &f01, 1)) {
+-		return false;
+-	}
+-	f01 = (uint8_t)((f01 & ~0x03u) | J3_RMI_NO_SLEEP | J3_RMI_CONFIGURED);
+-	if (!j3_rmi_write(j3_f01_ctrl, &f01, 1)) {
+-		return false;
+-	}
+-
+-	printf("J3 INPUT: TD4100 RMI ready F01=%#x F12 q=%#x c=%#x d1=%#x points=%u max=%ux%u\n",
+-	    j3_f01_ctrl, j3_f12_query, j3_f12_ctrl, j3_f12_data1,
+-	    j3_touch_points, j3_touch_max_x, j3_touch_max_y);
+-	return true;
+-}
++static bool
++j3_touch_setup(void)
++{
++	if (!j3_touch_bus_ready) {
++		j3_touch_bus_ready = j3_touch_select_pins();
++		if (!j3_touch_bus_ready) {
++			printf("J3 INPUT: TD4100 setup fail bus\n");
++			return false;
++		}
++	}
++	if (!j3_rmi_discover()) {
++		printf("J3 INPUT: TD4100 setup fail discover\n");
++		return false;
++	}
++
++	/*
++	 * Follow Samsung's TD4100 F12 initialisation order. Query 5 byte 0 is
++	 * the Query 6 size; bytes 1..4 are the Ctrl0..31 presence bitmap.
++	 */
++	uint8_t q5[5];
++	if (!j3_rmi_read((uint16_t)(j3_f12_query + 5), q5, sizeof(q5))) {
++		printf("J3 INPUT: TD4100 setup fail q5 read\n");
++		return false;
++	}
++	if (!(q5[3] & 0x80u) || !(q5[4] & 0x10u)) {
++		printf("J3 INPUT: TD4100 setup fail q5 ctrl23/28 absent q5=%02x:%02x:%02x:%02x:%02x\n",
++		    q5[0], q5[1], q5[2], q5[3], q5[4]);
++		return false;
++	}
++
++	unsigned ctrl8_off = j3_pop8(q5[1]);
++	unsigned ctrl23_off = j3_pop8(q5[1]) + j3_pop8(q5[2]) +
++	    j3_pop8((uint8_t)(q5[3] & 0x7fu));
++	unsigned ctrl26_off = ctrl23_off + ((q5[3] & 0x80u) ? 1u : 0u) +
++	    j3_pop8((uint8_t)(q5[4] & 0x03u));
++	unsigned ctrl28_off = ctrl26_off +
++	    j3_pop8((uint8_t)(q5[4] & 0x0cu));
++
++	static bool logged_map;
++	if (!logged_map) {
++		printf("J3 INPUT: TD4100 F12 map q5=%02x:%02x:%02x:%02x:%02x off8=%u off23=%u off26=%u off28=%u\n",
++		    q5[0], q5[1], q5[2], q5[3], q5[4],
++		    ctrl8_off, ctrl23_off, ctrl26_off, ctrl28_off);
++		logged_map = true;
++	}
++
++	uint8_t ctrl23[2];
++	if (!j3_rmi_read((uint16_t)(j3_f12_ctrl + ctrl23_off),
++	    ctrl23, sizeof(ctrl23))) {
++		printf("J3 INPUT: TD4100 setup fail ctrl23 read addr=%#x\n",
++		    (uint16_t)(j3_f12_ctrl + ctrl23_off));
++		return false;
++	}
++	/* Samsung keeps the firmware's existing Ctrl23 object mask. */
++	j3_touch_points = ctrl23[1] ? ctrl23[1] : J3_TOUCH_POINTS;
++	if (j3_touch_points > J3_TOUCH_POINTS) {
++		j3_touch_points = J3_TOUCH_POINTS;
++	}
++	if (!(ctrl23[0] & 0x01u)) {
++		printf("J3 INPUT: TD4100 ctrl23 finger object disabled mask=%#x points=%u\n",
++		    ctrl23[0], j3_touch_points);
++	}
++
++	uint8_t q8_size = 0;
++	uint8_t q8[3] = {0, 0, 0};
++	if (!j3_rmi_read((uint16_t)(j3_f12_query + 7), &q8_size, 1)) {
++		printf("J3 INPUT: TD4100 setup fail q8 size read\n");
++		return false;
++	}
++	if (q8_size < 2 || q8_size > sizeof(q8)) {
++		printf("J3 INPUT: TD4100 setup fail q8 size=%u\n", q8_size);
++		return false;
++	}
++	if (!j3_rmi_read((uint16_t)(j3_f12_query + 8), q8, q8_size)) {
++		printf("J3 INPUT: TD4100 setup fail q8 read size=%u\n", q8_size);
++		return false;
++	}
++	if (!(q8[1] & 0x02u)) {
++		printf("J3 INPUT: TD4100 setup fail F12 Data1 absent q8=%02x:%02x:%02x\n",
++		    q8[0], q8[1], q8[2]);
++		return false;
++	}
++	j3_f12_data1 = (uint16_t)(j3_f12_data + ((q8[1] & 0x01u) ? 1u : 0u));
++
++	uint8_t q10 = 0;
++	if (!j3_rmi_read((uint16_t)(j3_f12_query + 10), &q10, 1)) {
++		printf("J3 INPUT: TD4100 setup fail q10 read\n");
++		return false;
++	}
++	if (q10 & 0x20u) {
++		uint8_t feature = 0;
++		if (!(q5[4] & 0x04u)) {
++			printf("J3 INPUT: TD4100 setup fail glove feature without ctrl26 q10=%#x\n", q10);
++			return false;
++		}
++		if (!j3_rmi_write((uint16_t)(j3_f12_ctrl + ctrl26_off), &feature, 1)) {
++			printf("J3 INPUT: TD4100 setup fail ctrl26 write addr=%#x\n",
++			    (uint16_t)(j3_f12_ctrl + ctrl26_off));
++			return false;
++		}
++	}
++
++	uint8_t report = J3_RMI_REPORT_ENABLE;
++	if (!j3_rmi_write((uint16_t)(j3_f12_ctrl + ctrl28_off), &report, 1)) {
++		printf("J3 INPUT: TD4100 setup fail ctrl28 write addr=%#x report=%#x\n",
++		    (uint16_t)(j3_f12_ctrl + ctrl28_off), report);
++		return false;
++	}
++
++	uint8_t geometry[4];
++	if (j3_rmi_read((uint16_t)(j3_f12_ctrl + ctrl8_off),
++	    geometry, sizeof(geometry))) {
++		unsigned maxx = (unsigned)geometry[0] | ((unsigned)geometry[1] << 8);
++		unsigned maxy = (unsigned)geometry[2] | ((unsigned)geometry[3] << 8);
++		if (maxx >= 700 && maxx < 2048) {
++			j3_touch_max_x = maxx;
++		}
++		if (maxy >= 1200 && maxy < 4096) {
++			j3_touch_max_y = maxy;
++		}
++	}
++
++	uint8_t f01_ctrl = 0;
++	if (!j3_rmi_read(j3_f01_ctrl, &f01_ctrl, 1)) {
++		printf("J3 INPUT: TD4100 setup fail F01 ctrl read addr=%#x\n", j3_f01_ctrl);
++		return false;
++	}
++	/* Match Samsung synaptics_rmi4_set_configured(): preserve control bits. */
++	uint8_t configured_ctrl = (uint8_t)(f01_ctrl | J3_RMI_CONFIGURED);
++	if (!j3_rmi_write(j3_f01_ctrl, &configured_ctrl, 1)) {
++		printf("J3 INPUT: TD4100 setup fail F01 configured write addr=%#x old=%#x new=%#x\n",
++		    j3_f01_ctrl, f01_ctrl, configured_ctrl);
++		return false;
++	}
++
++	uint8_t ctrl_verify = 0;
++	if (!j3_rmi_read(j3_f01_ctrl, &ctrl_verify, 1)) {
++		printf("J3 INPUT: TD4100 setup fail F01 ctrl verify read\n");
++		return false;
++	}
++	if (!(ctrl_verify & J3_RMI_CONFIGURED)) {
++		printf("J3 INPUT: TD4100 setup fail F01 configured did not latch ctrl=%#x\n",
++		    ctrl_verify);
++		return false;
++	}
++
++	uint8_t status = 0xffu;
++	bool status_configured = false;
++	for (unsigned tries = 0; tries < 6; tries++) {
++		if (!j3_f01_data || !j3_rmi_read(j3_f01_data, &status, 1)) {
++			printf("J3 INPUT: TD4100 setup fail F01 status read addr=%#x\n", j3_f01_data);
++			return false;
++		}
++		if (status & 0x40u) {
++			printf("J3 INPUT: TD4100 setup fail flash-program status=%#x\n", status);
++			return false;
++		}
++		if (!(status & 0x80u)) {
++			status_configured = true;
++			break;
++		}
++		j3_sleep_ms(&j3_touch_sleep_chan, 20);
++	}
++	if (!status_configured) {
++		printf("J3 INPUT: TD4100 still unconfigured status=%#x ctrl=%#x obj=%#x report=%#x\n",
++		    status, ctrl_verify, ctrl23[0], report);
++		return false;
++	}
++
++	printf("J3 INPUT: TD4100 RMI ready F01=%#x F12 q=%#x c=%#x d1=%#x points=%u max=%ux%u status=%#x obj=%#x report=%#x\n",
++	    j3_f01_ctrl, j3_f12_query, j3_f12_ctrl, j3_f12_data1,
++	    j3_touch_points, j3_touch_max_x, j3_touch_max_y,
++	    status, ctrl23[0], report);
++	return true;
++}
+ 
+ static int
+ j3_touch_scale(unsigned value, unsigned maximum, unsigned outmax)
