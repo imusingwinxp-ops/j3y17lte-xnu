@@ -1,0 +1,108 @@
+--- a/iokit/Kernel/arm/SweetFramebuffer.cpp
++++ b/iokit/Kernel/arm/SweetFramebuffer.cpp
+@@ -40,6 +40,58 @@
+ 
+ extern "C" int sweet_console_muted;     /* osfmk/console/serial_console.c */
+ 
++#if defined(ARM64_BOARD_CONFIG_J3Y17LTE)
++extern "C" vm_offset_t ml_io_map(vm_offset_t, vm_size_t);
++
++/*
++ * Exynos7570 DSIM0 is already initialised and streaming the bootloader's
++ * 720x1280 video-mode panel when XNU takes over.  Samsung's J3Y17LTE TD4100
++ * panel driver controls brightness with the standard DCS 0x51 command.  The
++ * old Sweet power path assumed AMOLED and only painted black pixels, leaving
++ * this phone's LCD illumination visibly on.
++ *
++ * Keep this deliberately tiny and fail-soft: write one short DCS packet to
++ * the already-running DSIM header FIFO.  If the FIFO is not usable, the old
++ * black-frame behaviour remains and boot/display scanout are untouched.
++ */
++#define J3_DSIM0_PA                    0x14800000u
++#define J3_DSIM_INTSRC                 0x034u
++#define J3_DSIM_PKTHDR                 0x03cu
++#define J3_DSIM_FIFOCTRL               0x04cu
++#define J3_DSIM_PH_FIFO_EMPTY          (1u << 28)
++#define J3_DSIM_PH_FIFO_FULL           (1u << 11)
++#define J3_DSI_DCS_SHORT_WRITE_PARAM   0x15u
++#define J3_DCS_BRIGHTNESS              0x51u
++#define J3_WAKE_BRIGHTNESS             0xa5u
++
++static vm_offset_t gJ3Dsim0;
++
++static bool
++j3_set_panel_brightness(uint8_t level)
++{
++	if (!gJ3Dsim0) {
++		gJ3Dsim0 = ml_io_map(J3_DSIM0_PA, 0x1000);
++	}
++	if (!gJ3Dsim0) {
++		return false;
++	}
++
++	volatile uint32_t *ints = (volatile uint32_t *)(gJ3Dsim0 + J3_DSIM_INTSRC);
++	volatile uint32_t *hdr = (volatile uint32_t *)(gJ3Dsim0 + J3_DSIM_PKTHDR);
++	volatile uint32_t *fifo = (volatile uint32_t *)(gJ3Dsim0 + J3_DSIM_FIFOCTRL);
++	for (unsigned spin = 0; spin < 100000u; spin++) {
++		if (!(*fifo & J3_DSIM_PH_FIFO_FULL)) {
++			*ints = J3_DSIM_PH_FIFO_EMPTY; /* W1C */
++			__asm__ volatile("dsb oshst" ::: "memory");
++			*hdr = J3_DSI_DCS_SHORT_WRITE_PARAM |
++			    (J3_DCS_BRIGHTNESS << 8) | ((uint32_t)level << 16);
++			__asm__ volatile("dsb osh" ::: "memory");
++			for (unsigned done = 0; done < 100000u; done++) {
++				if (*ints & J3_DSIM_PH_FIFO_EMPTY) {
++					return true;
++				}
++				__asm__ volatile("yield");
++			}
++			return false;
++		}
++		__asm__ volatile("yield");
++	}
++	return false;
++}
++#endif
++
+ #if defined(ARM64_BOARD_CONFIG_SWEET) || defined(ARM64_BOARD_CONFIG_J3Y17LTE)
+ #include <IOKit/IOService.h>
+ #include <IOKit/IOUserClient.h>
+@@ -234,6 +286,13 @@
+ 					row[x] = step < 6 ? (row[x] >> 1) & 0x7f7f7f7f : 0;
+ 				}
+ 			}
++#if defined(ARM64_BOARD_CONFIG_J3Y17LTE)
++			if (step == 6) {
++				bool ok = j3_set_panel_brightness(0);
++				IOLog("J3 FB: LCD backlight %s after fade\n",
++				    ok ? "off" : "DSI command failed");
++			}
++#endif
+ 		}
+ 		sender->setTimeoutUS(SWEET_FB_VSYNC_US);
+ 		return;
+@@ -536,14 +595,23 @@
+ 		break;
+ 	case kSweetFBRequestPowerChange:
+ 		if (args->scalarInputCount >= 1) {
+ 			bool off = args->scalarInput[0] == 0;
++			bool changed;
+ 			IOLockLock(fFB->fLock);
+-			if (off != fFB->fPowerOff) {
++			changed = off != fFB->fPowerOff;
++			if (changed) {
+ 				fFB->fPowerOff = off;
+ 				fFB->fFadeStep = 0;
+ 				fFB->fDirty = true;     /* on: redraw the latest frame */
+ 			}
+ 			IOLockUnlock(fFB->fLock);
++#if defined(ARM64_BOARD_CONFIG_J3Y17LTE)
++			if (changed && !off) {
++				bool ok = j3_set_panel_brightness(J3_WAKE_BRIGHTNESS);
++				IOLog("J3 FB: LCD backlight wake %s level=%u\n",
++				    ok ? "ok" : "DSI command failed", J3_WAKE_BRIGHTNESS);
++			}
++#endif
+ 			IOLog("SWEET FB: display %s\n", off ? "off" : "on");
+ 		}
+ 		break;
