@@ -1,0 +1,24 @@
+--- a/osfmk/arm/pmap/pmap.c
++++ b/osfmk/arm/pmap/pmap.c
+@@ -21,7 +21,21 @@ pmap_init(
+ 	 *	structures for pages we allocate to be page tables in
+ 	 *	pmap_expand().
+ 	 */
++#if defined(J3Y17LTE)
++	/*
++	 * Bank1 is discovered after pmap_init(), but pmap_enqueue_pages()
++	 * indexes this internal object by physical offset from gPhysBase.
++	 * Keep the object large enough for the complete J3 PA span from boot;
++	 * this does not advertise or allocate the upper RAM itself.
++	 */
++#define J3_PMAP_OBJECT_SPAN ((vm_object_size_t)0x80000000ULL)
++	_vm_object_allocate(J3_PMAP_OBJECT_SPAN, pmap_object);
++	kprintf("J3 RAM: pmap_object span=%llu MiB boot_mem=%llu MiB gPhysBase=%#lx\n",
++	    (uint64_t)(J3_PMAP_OBJECT_SPAN >> 20), (uint64_t)(mem_size >> 20),
++	    (unsigned long)gPhysBase);
++#else
+ 	_vm_object_allocate(mem_size, pmap_object);
++#endif
+ 	pmap_object->copy_strategy = MEMORY_OBJECT_COPY_NONE;
+ 
+ 	/*
