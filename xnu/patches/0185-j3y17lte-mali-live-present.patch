@@ -36,15 +36,11 @@
  	return true;
  }
  
-@@ -620,10 +629,73 @@
- 		IOLog("J3 GPU: framebuffer GPU write %s old=%#llx gpu=%#llx target=%#llx restored=yes attr=%u\n",
- 		    fbVerified ? "PASS" : "FAILED", old, gpu, fbTarget,
- 		    chosenAttr);
- 	}
+@@ -620,13 +629,76 @@
+ 
 +	if (ramVerified && fbVerified) {
 +		j3_mali_live_attr = chosenAttr;
 +	}
- 
  	IOLog("J3 GPU: real-job summary RAM=%s FB=%s; CPU present remains active\n",
  	    ramVerified ? "PASS" : "FAIL", fbVerified ? "PASS" : "FAIL");
  	return ramVerified && fbVerified;
@@ -110,6 +106,13 @@
 +	}
 +}
 +
+ /*
+  * Credit-efficient validation ladder. Every stage uses public Midgard
+  * register/job formats and stops safely on failure.
+  */
+ static bool
+ j3_mali_validate_ladder(vm_offset_t mali)
+ {
 @@ -711,6 +783,13 @@
  	bool jobsOK = j3_mali_real_job_tests(mali);
  	IOLog("J3 GPU: real jobs %s; framebuffer presentation still CPU\n",
