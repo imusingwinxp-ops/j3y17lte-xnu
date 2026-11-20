@@ -1,6 +1,6 @@
 --- a/iokit/Kernel/arm/SweetFramebuffer.cpp
 +++ b/iokit/Kernel/arm/SweetFramebuffer.cpp
-@@ -235,8 +235,9 @@
+@@ -235,9 +235,10 @@
  #define J3_MALI_AS_READ_INNER           0x04u
  #define J3_MALI_PT_INVALID              0x02ULL
  #define J3_MALI_PT_PTE                  0x03ULL
@@ -15,7 +15,7 @@
 -#define J3_MALI_MEMATTR_R28             0x0000008d884d4f48ULL
 +#define J3_MALI_MEMATTR_UPSTREAM        0x0000000000888d88ULL
  
-@@ -364,9 +365,11 @@
+@@ -364,10 +365,12 @@
  	volatile uint64_t *leaf =
  	    (volatile uint64_t *)pt->page[table].va;
  	unsigned slot = (unsigned)((gpuVA >> 12) & 0x1ffULL);
