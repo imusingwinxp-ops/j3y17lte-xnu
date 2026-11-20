@@ -20,9 +20,11 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            build-essential meson ninja-build pkg-config \
+            build-essential meson ninja-build pkg-config python3-pip \
             python3-mako python3-yaml python3-ply python3-packaging \
             bison flex libdrm-dev libexpat1-dev libzstd-dev
+          python3 -m pip install --user --break-system-packages 'meson>=1.4,<2'
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
 
       - name: Fetch pinned Mesa
         run: |
