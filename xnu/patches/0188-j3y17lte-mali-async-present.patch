@@ -24,13 +24,13 @@
  #define J3_MALI_COPY_SHADER_OFF          0x000u
  #define J3_MALI_COPY_RSD_OFF             0x100u
  #define J3_MALI_COPY_TLS_OFF             0x140u
-@@ -368,2 +368,3 @@
+@@ -368,2 +373,3 @@
 -	IOMemoryDescriptor *sourceMemory;
 -	uint32_t sourceOffset;
 +	IOMemoryDescriptor *sourceMemory[J3_MALI_SOURCE_SLOTS];
 +	uint32_t sourceOffset[J3_MALI_SOURCE_SLOTS];
 +	unsigned nextSourceSlot;
-@@ -372,2 +373,8 @@
+@@ -372,2 +378,8 @@
  	bool initialized;
  	bool disabled;
 +	bool inFlight;
@@ -39,10 +39,10 @@
 +	uint64_t busyFrames;
 +	uint64_t sourceHits;
 +	uint64_t sourceRemaps;
-@@ -376,1 +383,2 @@
+@@ -376,1 +388,2 @@
  static struct j3_mali_compute_ctx j3_mali_compute;
 +static uint64_t j3_mali_cpu_fallbacks;
-@@ -840,5 +840,7 @@
+@@ -840,5 +853,7 @@
  	c->initialized = true;
  	IOLog("J3 GPU: full-frame compute ARMED JS1 shader=112B words=%u ptpages=%u\n",
  	    J3_MALI_COPY_WORDS, c->pt.count);
@@ -50,7 +50,7 @@
 +	    J3_MALI_SOURCE_SLOTS);
  	return true;
  }
-@@ -846,47 +848,132 @@
+@@ -846,47 +861,132 @@
 -static bool
 -j3_mali_present_surface(SweetSurface *s, uintptr_t src)
 +static int
@@ -201,7 +201,7 @@
  	flush_dcache64((addr64_t)(src + s->offset),
  	    (unsigned)J3_MALI_COPY_BYTES, FALSE);
  	flush_dcache64((addr64_t)(uintptr_t)c->resourcePage, 4096, FALSE);
-@@ -904,40 +991,11 @@
+@@ -904,40 +1004,11 @@
  	j3_gpu_write(mali, J3_MALI_JS1_AFFINITY_NEXT_HI, 0);
  	j3_gpu_write(mali, J3_MALI_JS1_CONFIG_NEXT, J3_MALI_JS_CFG);
  	j3_gpu_write(mali, J3_MALI_JS1_COMMAND_NEXT, J3_MALI_JS_START);
@@ -247,7 +247,7 @@
 -	return true;
 +	return j3_mali_compute_poll(mali, true);
  }
-@@ -1518,9 +1605,16 @@
+@@ -1518,9 +1589,16 @@
  		if (src != 0 && bpe == 4) {
  #if defined(ARM64_BOARD_CONFIG_J3Y17LTE)
 -			if (sx == 0 && sy == 0 && dx == 0 && dy == 0 &&
@@ -267,7 +267,7 @@
  					memcpy((void *)fPixels,
  					    (const void *)(src + s->offset),
  					    (size_t)fRowBytes * fHeight);
-@@ -1528,7 +1622,13 @@
+@@ -1528,7 +1606,13 @@
  			} else
  #endif
  			{
