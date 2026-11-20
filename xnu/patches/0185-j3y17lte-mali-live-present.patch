@@ -1,6 +1,6 @@
 --- a/iokit/Kernel/arm/SweetFramebuffer.cpp
 +++ b/iokit/Kernel/arm/SweetFramebuffer.cpp
-@@ -235,11 +235,12 @@
+@@ -235,12 +235,20 @@
  #define J3_MALI_AS_READ_INNER           0x04u
  #define J3_MALI_PT_INVALID              0x02ULL
  #define J3_MALI_PT_PTE                  0x03ULL
@@ -24,7 +24,7 @@
  static uint32_t
  j3_gpu_read(vm_offset_t base, uint32_t offset)
  {
-@@ -356,9 +357,9 @@
+@@ -356,9 +364,10 @@
  	volatile uint64_t *leaf =
  	    (volatile uint64_t *)pt->page[table].va;
  	unsigned slot = (unsigned)((gpuVA >> 12) & 0x1ffULL);
@@ -36,7 +36,7 @@
  	return true;
  }
  
-@@ -620,6 +621,10 @@
+@@ -620,10 +629,73 @@
  		IOLog("J3 GPU: framebuffer GPU write %s old=%#llx gpu=%#llx target=%#llx restored=yes attr=%u\n",
  		    fbVerified ? "PASS" : "FAILED", old, gpu, fbTarget,
  		    chosenAttr);
@@ -110,7 +110,7 @@
 +	}
 +}
 +
-@@ -711,6 +780,13 @@
+@@ -711,6 +783,13 @@
  	bool jobsOK = j3_mali_real_job_tests(mali);
  	IOLog("J3 GPU: real jobs %s; framebuffer presentation still CPU\n",
  	    jobsOK ? "PASS" : "FAILED");
@@ -124,7 +124,7 @@
  
  	/* Return to a low-power diagnostic state: shaders first, then L2.
  	 * The documented Midgard PM sequence powers the tiler down with L2. */
-@@ -946,9 +1022,17 @@
+@@ -946,10 +1025,19 @@
  	if (fVsync == NULL || fWorkLoop->addEventSource(fVsync) != kIOReturnSuccess) {
  		IOLog("SWEET FB: no vsync timer\n");
  		return false;
@@ -144,7 +144,7 @@
  	fVsync->setTimeoutUS(SWEET_FB_VSYNC_US);
  
  	setProperty(kIOUserClientClassKey, "IOMobileFramebufferUserClient");
-@@ -1163,12 +1247,27 @@
+@@ -1163,14 +1251,28 @@
  		if (w <= 0 || h <= 0 || s->elementWidth != 1 || s->elementHeight != 1 ||
  		    s->memory == NULL || last > s->memory->getLength()) {
  			src = 0;
