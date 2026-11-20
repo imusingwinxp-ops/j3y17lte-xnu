@@ -26,10 +26,14 @@ jobs:
 
       - name: Fetch pinned Mesa
         run: |
-          git clone https://gitlab.freedesktop.org/mesa/mesa.git mesa
-          git -C mesa fetch origin e24dc5bd1e7fe6101bdc866fb16a15a8fcae1aae
-          git -C mesa checkout --detach e24dc5bd1e7fe6101bdc866fb16a15a8fcae1aae
-          test "$(git -C mesa rev-parse HEAD)" = "e24dc5bd1e7fe6101bdc866fb16a15a8fcae1aae"
+          MESA_REF=e24dc5bd1e7fe6101bdc866fb16a15a8fcae1aae
+          curl --fail --location --retry 3 \
+            "https://gitlab.freedesktop.org/mesa/mesa/-/archive/$MESA_REF/mesa-$MESA_REF.tar.gz" \
+            -o mesa.tar.gz
+          mkdir mesa
+          tar -xzf mesa.tar.gz --strip-components=1 -C mesa
+          test -f mesa/src/panfrost/compiler/pan_compiler.c
+          echo "$MESA_REF" > mesa/J3_MESA_PIN
 
       - name: Inject J3 T720 host generator
         run: |
