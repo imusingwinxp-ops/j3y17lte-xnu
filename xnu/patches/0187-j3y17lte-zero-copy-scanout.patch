@@ -1,0 +1,306 @@
+--- a/iokit/Kernel/arm/SweetSurface.cpp
++++ b/iokit/Kernel/arm/SweetSurface.cpp
+@@ -601,10 +601,45 @@ IOSurfaceRootUserClient::create(IOExternalMethodArguments *args)
+ 	ret = sweet_surface_layout(s, props);
+ 	if (ret == kIOReturnSuccess) {
+ 		IOBufferMemoryDescriptor *mem = NULL;
+-		if ((uint64_t)OSAddAtomic64(s->allocSize, (volatile SInt64 *)&sweet_surface_wired) +
+-		    s->allocSize <= SWEET_SURFACE_WIRED_MAX) {
++		bool underLimit =
++		    (uint64_t)OSAddAtomic64(s->allocSize,
++		    (volatile SInt64 *)&sweet_surface_wired) +
++		    s->allocSize <= SWEET_SURFACE_WIRED_MAX;
++		if (underLimit) {
++#if defined(ARM64_BOARD_CONFIG_J3Y17LTE)
++			/*
++			 * Native J3 front-buffer candidates are made physically contiguous
++			 * when possible. That lets DECON scan the IOSurface directly and
++			 * removes the 3.5 MiB CPU framebuffer copy from full-screen presents.
++			 * Failure is harmless: retry with the original wired allocation.
++			 */
++			bool nativeScanout = s->width == 720 && s->height == 1280 &&
++			    s->bytesPerElement == 4 && s->elementWidth == 1 &&
++			    s->elementHeight == 1 && s->bytesPerRow == 2880 &&
++			    s->offset == 0 && s->planeCount == 0;
++			if (nativeScanout) {
++				mem = IOBufferMemoryDescriptor::inTaskWithOptions(kernel_task,
++				    kIODirectionInOut | kIOMemoryKernelUserShared |
++				    kIOMemoryPhysicallyContiguous | kIOMemoryMapperNone,
++				    s->allocSize, page_size);
++				if (mem != NULL) {
++					IOByteCount span = 0;
++					addr64_t pa = mem->getPhysicalSegment(0, &span,
++					    kIOMemoryMapperNone);
++					if (!pa || span < s->allocSize) {
++						mem->release();
++						mem = NULL;
++					} else {
++						IOLog("J3 SURF: contiguous scanout candidate pa=%#llx bytes=%llu alloc=%u\n",
++						    pa, (uint64_t)span, s->allocSize);
++					}
++				}
++			}
++#endif
++			if (mem == NULL) {
+ 			mem = IOBufferMemoryDescriptor::inTaskWithOptions(kernel_task,
+ 			    kIODirectionInOut | kIOMemoryKernelUserShared, s->allocSize, page_size);
++			}
+ 		}
+ 		if (mem == NULL) {
+ 			OSAddAtomic64(-(SInt64)s->allocSize, (volatile SInt64 *)&sweet_surface_wired);
+--- a/iokit/Kernel/arm/SweetFramebuffer.cpp
++++ b/iokit/Kernel/arm/SweetFramebuffer.cpp
+@@ -1147,6 +1147,185 @@ get32(const uint8_t *p, uint32_t off)
+ 
+ static uint32_t sweet_fb_swaps_logged;
+ 
++#if defined(ARM64_BOARD_CONFIG_J3Y17LTE)
++/*
++ * J3XNU097 zero-copy presentation.
++ *
++ * Samsung's Exynos7570 source describes DECON0 at 0x14830000. The
++ * bootloader already has one of its three windows scanning the XNU boot
++ * framebuffer at 0x67000000. Rather than reprogramming the display mode,
++ * locate that existing window and only replace VIDW_ADD0 with a physically
++ * contiguous IOSurface address. Geometry, format, channel and timing remain
++ * exactly as the bootloader configured them.
++ *
++ * This removes the kernel CPU memcpy from the full-screen present path. It
++ * is deliberately independent of the 096 Mali proof jobs: Mali stays powered
++ * and exercised, while DECON handles scanout. Fragmented/multi-layer frames
++ * fall back to the proven CPU framebuffer path.
++ */
++#define J3_DECON0_PA                    0x14830000u
++#define J3_DECON0_SIZE                  0x8000u
++#define J3_DECON_SHADOWCON              0x0030u
++#define J3_DECON_WINCON(_w)             (0x0050u + ((_w) * 4u))
++#define J3_DECON_WIN_ENABLE             (1u << 0)
++#define J3_DECON_VIDW_ADD0(_w)          (0x0880u + ((_w) * 0x10u))
++#define J3_DECON_UPDATE                 0x0710u
++#define J3_DECON_UPDATE_STANDALONE      (1u << 0)
++#define J3_DECON_WIN_PROTECT(_w)        (1u << (8u + (_w)))
++#define J3_DECON_MAX_WIN                3u
++
++static vm_offset_t j3_decon0;
++static int j3_decon_scanout_win = -1;
++static bool j3_decon_direct_active;
++static bool j3_decon_direct_disabled;
++static bool j3_decon_direct_checked;
++static bool j3_decon_direct_requested = true;
++static uint64_t j3_decon_direct_frames;
++static uint32_t j3_decon_direct_fail_logs;
++static SweetSurface *j3_decon_scanout_surface;
++
++static inline uint32_t
++j3_decon_read(uint32_t off)
++{
++	return *(volatile uint32_t *)(j3_decon0 + off);
++}
++
++static inline void
++j3_decon_write(uint32_t off, uint32_t value)
++{
++	*(volatile uint32_t *)(j3_decon0 + off) = value;
++	__asm__ volatile("dsb sy" ::: "memory");
++}
++
++static bool
++j3_decon_direct_allowed(void)
++{
++	if (!j3_decon_direct_checked) {
++		uint32_t enabled = 1;
++		PE_parse_boot_argn("j3fb_direct", &enabled, sizeof(enabled));
++		j3_decon_direct_requested = enabled != 0;
++		j3_decon_direct_checked = true;
++		IOLog("J3 FB: direct scanout %s (j3fb_direct=%u)\n",
++		    j3_decon_direct_requested ? "enabled" : "disabled", enabled);
++	}
++	return j3_decon_direct_requested && !j3_decon_direct_disabled;
++}
++
++static bool
++j3_decon_probe(uint32_t fallbackPA)
++{
++	if (j3_decon_scanout_win >= 0) {
++		return true;
++	}
++	if (!j3_decon_direct_allowed()) {
++		return false;
++	}
++	if (!j3_decon0) {
++		j3_decon0 = ml_io_map(J3_DECON0_PA, J3_DECON0_SIZE);
++	}
++	if (!j3_decon0) {
++		j3_decon_direct_disabled = true;
++		IOLog("J3 FB: direct scanout FALLBACK DECON map failed\n");
++		return false;
++	}
++	for (unsigned win = 0; win < J3_DECON_MAX_WIN; win++) {
++		uint32_t con = j3_decon_read(J3_DECON_WINCON(win));
++		uint32_t base = j3_decon_read(J3_DECON_VIDW_ADD0(win));
++		IOLog("J3 FB: DECON probe win=%u con=%#x base=%#x\n",
++		    win, con, base);
++		if ((con & J3_DECON_WIN_ENABLE) && base == fallbackPA) {
++			j3_decon_scanout_win = (int)win;
++			IOLog("J3 FB: direct scanout ARMED win=%u bootfb=%#x\n",
++			    win, fallbackPA);
++			return true;
++		}
++	}
++	j3_decon_direct_disabled = true;
++	IOLog("J3 FB: direct scanout FALLBACK boot framebuffer window not found\n");
++	return false;
++}
++
++static bool
++j3_decon_set_base(uint32_t pa, uint32_t fallbackPA)
++{
++	if (!j3_decon_probe(fallbackPA)) {
++		return false;
++	}
++	unsigned win = (unsigned)j3_decon_scanout_win;
++	uint32_t oldShadow = j3_decon_read(J3_DECON_SHADOWCON);
++	j3_decon_write(J3_DECON_SHADOWCON,
++	    oldShadow | J3_DECON_WIN_PROTECT(win));
++	j3_decon_write(J3_DECON_VIDW_ADD0(win), pa);
++	j3_decon_write(J3_DECON_SHADOWCON, oldShadow);
++	j3_decon_write(J3_DECON_UPDATE,
++	    j3_decon_read(J3_DECON_UPDATE) | J3_DECON_UPDATE_STANDALONE);
++	if (j3_decon_read(J3_DECON_VIDW_ADD0(win)) != pa) {
++		j3_decon_direct_disabled = true;
++		IOLog("J3 FB: direct scanout FALLBACK base readback failed win=%u pa=%#x\n",
++		    win, pa);
++		return false;
++	}
++	j3_decon_direct_active = pa != fallbackPA;
++	return true;
++}
++
++static void
++j3_decon_restore_cpu(uint32_t fallbackPA)
++{
++	if (!j3_decon_direct_active) {
++		return;
++	}
++	if (j3_decon_set_base(fallbackPA, fallbackPA)) {
++		IOLog("J3 FB: direct scanout -> CPU framebuffer fallback pa=%#x\n",
++		    fallbackPA);
++	}
++	j3_decon_direct_active = false;
++	OSSafeReleaseNULL(j3_decon_scanout_surface);
++}
++
++static bool
++j3_decon_present_surface(SweetSurface *s, uintptr_t src, uint32_t fallbackPA,
++    uint32_t rowBytes, uint32_t height)
++{
++	if (!j3_decon_direct_allowed() || !s || !s->memory ||
++	    s->pixelFormat != SWEET_FB_FORMAT_BGRA) {
++		return false;
++	}
++	uint64_t bytes = (uint64_t)rowBytes * height;
++	IOByteCount span = 0;
++	addr64_t pa = s->memory->getPhysicalSegment(s->offset, &span,
++	    kIOMemoryMapperNone);
++	if (!pa || span < bytes || pa > 0xffffffffULL ||
++	    bytes > 0x100000000ULL - pa || (pa & 63ULL)) {
++		if (j3_decon_direct_fail_logs++ < 8) {
++			IOLog("J3 FB: direct scanout surface rejected pa=%#llx span=%llu need=%llu fmt=%#x\n",
++			    pa, (uint64_t)span, bytes, s->pixelFormat);
++		}
++		return false;
++	}
++
++	/* DECON is a non-coherent DMA reader on this platform. */
++	flush_dcache64((addr64_t)(src + s->offset), (unsigned)bytes, FALSE);
++	__asm__ volatile("dsb oshst" ::: "memory");
++	if (!j3_decon_set_base((uint32_t)pa, fallbackPA)) {
++		return false;
++	}
++
++	if (j3_decon_scanout_surface != s) {
++		s->retain();
++		SweetSurface *old = j3_decon_scanout_surface;
++		j3_decon_scanout_surface = s;
++		OSSafeReleaseNULL(old);
++	}
++	uint64_t frame = ++j3_decon_direct_frames;
++	if (frame <= 8 || (frame % 600ULL) == 0) {
++		IOLog("J3 FB: direct scanout frame=%llu win=%d pa=%#llx bytes=%llu\n",
++		    frame, j3_decon_scanout_win, pa, bytes);
++	}
++	return true;
++}
++#endif
++
+ /* Copy each enabled layer's surface into the panel memory (no scaling). */
+ void
+ AppleCLCD::swap(const uint8_t *rec)
+@@ -1154,6 +1333,16 @@ AppleCLCD::swap(const uint8_t *rec)
+ {
+ 	uint32_t mask = get32(rec, 0x104);
+ 
++#if defined(ARM64_BOARD_CONFIG_J3Y17LTE)
++	uint32_t activeLayers = 0;
++	for (uint32_t layer = 0; layer < SWEET_FB_LAYERS; layer++) {
++		if ((mask & (1u << layer)) && get32(rec, 0x54 + 4 * layer) != 0) {
++			activeLayers++;
++		}
++	}
++	bool j3DirectPresented = false;
++#endif
++
+ 	if (!fConsolePaused) {
+ 		int quiet = 0;
+ 		fConsolePaused = true;
+@@ -1254,25 +1443,40 @@ AppleCLCD::swap(const uint8_t *rec)
+ 		}
+ 		if (src != 0 && bpe == 4) {
+ #if defined(ARM64_BOARD_CONFIG_J3Y17LTE)
+-			if (sx == 0 && sy == 0 && dx == 0 && dy == 0 &&
++			bool fullScreen =
++			    sx == 0 && sy == 0 && dx == 0 && dy == 0 &&
+ 			    w == (int32_t)fWidth && h == (int32_t)fHeight &&
+-			    s->bytesPerRow == fRowBytes) {
++			    s->bytesPerRow == fRowBytes;
++			if (fullScreen && activeLayers == 1 &&
++			    fPhys <= 0xffffffffULL &&
++			    j3_decon_present_surface(s, src, (uint32_t)fPhys,
++			    fRowBytes, fHeight)) {
++				j3DirectPresented = true;
++			} else if (fullScreen) {
+ 				memcpy((void *)fPixels,
+ 				    (const void *)(src + s->offset),
+ 				    (size_t)fRowBytes * fHeight);
+-			} else
++			} else {
++				for (int32_t y = 0; y < h; y++) {
++					memcpy((void *)(fPixels + (uint64_t)(dy + y) * fRowBytes + (uint64_t)dx * 4),
++					    (const void *)(src + s->offset + (uint64_t)(sy + y) * s->bytesPerRow + (uint64_t)sx * 4),
++					    (size_t)w * 4);
++				}
++			}
++#else
++			for (int32_t y = 0; y < h; y++) {
++				memcpy((void *)(fPixels + (uint64_t)(dy + y) * fRowBytes + (uint64_t)dx * 4),
++				    (const void *)(src + s->offset + (uint64_t)(sy + y) * s->bytesPerRow + (uint64_t)sx * 4),
++				    (size_t)w * 4);
++			}
+ #endif
+-			{
+-			for (int32_t y = 0; y < h; y++) {
+-				memcpy((void *)(fPixels + (uint64_t)(dy + y) * fRowBytes + (uint64_t)dx * 4),
+-				    (const void *)(src + s->offset + (uint64_t)(sy + y) * s->bytesPerRow + (uint64_t)sx * 4),
+-				    (size_t)w * 4);
+-			}
+-			}
+ 		}
+ 		s->release();
+ 	}
+ #if defined(ARM64_BOARD_CONFIG_J3Y17LTE)
++	if (!j3DirectPresented && fPhys <= 0xffffffffULL) {
++		j3_decon_restore_cpu((uint32_t)fPhys);
++	}
+ 	j3_mali_present_pulse();
+ #endif
+ }
