@@ -30,7 +30,7 @@ int main(int argc, char **argv)
       return 2;
    }
 
-   const uint64_t gpu_id = 0x720;
+   const uint64_t gpu_id = 0x07200000ULL;
    const unsigned arch = 4;
 
    glsl_type_singleton_init_or_ref();
