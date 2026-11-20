@@ -1,0 +1,442 @@
+--- a/iokit/Kernel/arm/SweetFramebuffer.cpp
++++ b/iokit/Kernel/arm/SweetFramebuffer.cpp
+@@ -244,9 +244,53 @@
+ static vm_offset_t j3_mali_live_base;
+ static bool j3_mali_live_ready;
+ static unsigned j3_mali_live_attr;
+-static void *j3_mali_present_page;
+-static volatile uint64_t *j3_mali_present_fence;
+-static uint64_t j3_mali_present_fence_pa;
+ static uint64_t j3_mali_present_frames;
++static uint32_t j3_mali_leaf_logs;
++
++/* J3XNU097: real Midgard-v4 full-frame compute copy. */
++#define J3_MALI_JS1_BASE                0x1880u
++#define J3_MALI_JS1_COMMAND             (J3_MALI_JS1_BASE + 0x20u)
++#define J3_MALI_JS1_STATUS              (J3_MALI_JS1_BASE + 0x24u)
++#define J3_MALI_JS1_HEAD_NEXT_LO        (J3_MALI_JS1_BASE + 0x40u)
++#define J3_MALI_JS1_HEAD_NEXT_HI        (J3_MALI_JS1_BASE + 0x44u)
++#define J3_MALI_JS1_AFFINITY_NEXT_LO    (J3_MALI_JS1_BASE + 0x50u)
++#define J3_MALI_JS1_AFFINITY_NEXT_HI    (J3_MALI_JS1_BASE + 0x54u)
++#define J3_MALI_JS1_CONFIG_NEXT         (J3_MALI_JS1_BASE + 0x58u)
++#define J3_MALI_JS1_COMMAND_NEXT        (J3_MALI_JS1_BASE + 0x60u)
++#define J3_MALI_JOB_DONE1               (1u << 1)
++#define J3_MALI_JOB_FAIL1               (1u << 17)
++#define J3_MALI_COPY_BYTES               0x384000ULL
++#define J3_MALI_COPY_WORDS               921600u
++#define J3_MALI_COPY_SRC_VA              0x10000000ULL
++#define J3_MALI_COPY_DST_VA              0x10400000ULL
++#define J3_MALI_COPY_RES_VA              0x107f0000ULL
++#define J3_MALI_COPY_SHADER_OFF          0x000u
++#define J3_MALI_COPY_RSD_OFF             0x100u
++#define J3_MALI_COPY_TLS_OFF             0x140u
++#define J3_MALI_COPY_UBO_DESC_OFF        0x180u
++#define J3_MALI_COPY_UBO_DATA_OFF        0x190u
++#define J3_MALI_COPY_JOB_OFF             0x200u
++
++struct j3_mali_compute_ctx {
++	struct j3_mali_pt pt;
++	void *resourcePage;
++	uint64_t resourcePA;
++	IOMemoryDescriptor *sourceMemory;
++	uint32_t sourceOffset;
++	bool initialized;
++	bool disabled;
++};
++
++static struct j3_mali_compute_ctx j3_mali_compute;
++
++static const uint8_t j3_mali_copy_shader[112] = {
++	0x85,0xa8,0x20,0xc8,0x01,0x38,0x00,0x01,0x00,0x01,0x04,0x12,0x03,0x00,0x00,0x00,
++	0x88,0x00,0x80,0x08,0x00,0x7c,0xa2,0x14,0x01,0xd8,0x0a,0x08,0x00,0x00,0x55,0x55,
++	0x58,0x00,0x80,0x00,0x18,0x68,0x7b,0x04,0x05,0x18,0x00,0x00,0x00,0x00,0x00,0x00,
++	0x55,0xac,0x9a,0x89,0x00,0x38,0x00,0x00,0x30,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
++	0x55,0xac,0x7b,0x28,0x01,0x38,0x80,0x00,0x80,0xa8,0x05,0x40,0x14,0x08,0x00,0x00,
++	0x15,0xc8,0xe0,0xab,0x48,0x81,0x00,0x00,0x30,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
++	0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00
++};
+ 
+ static uint32_t
+ j3_gpu_read(vm_offset_t base, uint32_t offset)
+@@ -369,8 +413,11 @@
+ 	leaf[slot] = physical |
+ 	    (((uint64_t)memattrIndex & 7ULL) << 2) |
+ 	    J3_MALI_PT_HAP_READ | J3_MALI_PT_HAP_WRITE |
+ 	    J3_MALI_PT_SH_OUTER | J3_MALI_PT_LEAF_BLOCK;
+-	IOLog("J3 GPU: Mali-LPAE leaf va=%#llx pa=%#llx attr=%u pte=%#llx\n",
+-	    gpuVA, physical, memattrIndex, leaf[slot]);
++	if (j3_mali_leaf_logs < 16u) {
++		j3_mali_leaf_logs++;
++		IOLog("J3 GPU: Mali-LPAE leaf va=%#llx pa=%#llx attr=%u pte=%#llx\n",
++		    gpuVA, physical, memattrIndex, leaf[slot]);
++	}
+ 	return true;
+ }
+ 
+@@ -638,61 +685,278 @@
+-/*
+- * J3XNU095: once the boot-time RAM and framebuffer jobs have both proved the
+- * corrected MMU path, keep exercising JS0 from the live presentation path.
+- * This deliberately uses a tiny timestamp fence rather than touching visible
+- * pixels. If a live job ever faults, disable only this optional path and leave
+- * the CPU framebuffer fallback running.
+- */
+-static void
+-j3_mali_present_pulse(void)
+-{
+-	if (!j3_mali_live_ready || !j3_mali_live_base) {
+-		return;
+-	}
+-	uint64_t frame = ++j3_mali_present_frames;
+-	if ((frame % 120ULL) != 0) {
+-		return;
+-	}
+-
+-	if (!j3_mali_present_page) {
+-		j3_mali_present_page = IOMallocAligned(4096, 4096);
+-		if (!j3_mali_present_page) {
+-			IOLog("J3 GPU: live present DISABLED fence allocation failed\n");
+-			j3_mali_live_ready = false;
+-			return;
+-		}
+-		bzero(j3_mali_present_page, 4096);
+-		j3_mali_present_fence =
+-		    (volatile uint64_t *)((uintptr_t)j3_mali_present_page + 0x100);
+-		j3_mali_present_fence_pa =
+-		    (uint64_t)ml_vtophys((vm_offset_t)(uintptr_t)j3_mali_present_fence);
+-		if (!j3_mali_present_fence_pa) {
+-			IOLog("J3 GPU: live present DISABLED fence PA unavailable\n");
+-			IOFreeAligned(j3_mali_present_page, 4096);
+-			j3_mali_present_page = NULL;
+-			j3_mali_present_fence = NULL;
+-			j3_mali_live_ready = false;
+-			return;
+-		}
+-	}
+-
+-	*j3_mali_present_fence = 0;
+-	flush_dcache64((addr64_t)(uintptr_t)j3_mali_present_page, 4096, FALSE);
+-	bool mmuFault = false;
+-	bool ok = j3_mali_write_value(j3_mali_live_base,
+-	    j3_mali_present_fence_pa, J3_MALI_WRITE_TIMESTAMP,
+-	    j3_mali_live_attr, "live-present fence", &mmuFault);
+-	flush_dcache64((addr64_t)(uintptr_t)j3_mali_present_page, 4096, FALSE);
+-	uint64_t stamp = *j3_mali_present_fence;
+-	if (!ok || stamp == 0) {
+-		IOLog("J3 GPU: live present FALLBACK frame=%llu ok=%d stamp=%#llx mmufault=%d\n",
+-		    frame, ok, stamp, mmuFault);
+-		j3_mali_live_ready = false;
+-		return;
+-	}
+-	if (frame <= 360ULL || (frame % 600ULL) == 0) {
+-		IOLog("J3 GPU: live present MALI frame=%llu stamp=%#llx attr=%u\n",
+-		    frame, stamp, j3_mali_live_attr);
+-	}
+-}
++static bool
++j3_mali_map_md_range(struct j3_mali_pt *pt, IOMemoryDescriptor *memory,
++    uint32_t memoryOffset, uint64_t gpuVA, uint64_t bytes, unsigned attr)
++{
++	if (!memory || (memoryOffset & 0xfffu) || (gpuVA & 0xfffULL) ||
++	    (bytes & 0xfffULL)) {
++		return false;
++	}
++	uint64_t done = 0;
++	while (done < bytes) {
++		IOByteCount segLen = 0;
++		addr64_t pa = memory->getPhysicalSegment(
++		    (IOByteCount)memoryOffset + (IOByteCount)done, &segLen,
++		    kIOMemoryMapperNone);
++		if (!pa || !segLen || (pa & 0xfffULL)) {
++			return false;
++		}
++		uint64_t chunk = (uint64_t)segLen;
++		if (chunk > bytes - done) {
++			chunk = bytes - done;
++		}
++		if ((chunk & 0xfffULL) && chunk != bytes - done) {
++			return false;
++		}
++		for (uint64_t off = 0; off < chunk; off += 0x1000ULL) {
++			if (!j3_mali_pt_map_page(pt, gpuVA + done + off,
++			    (uint64_t)pa + off, attr)) {
++				return false;
++			}
++		}
++		done += chunk;
++	}
++	return true;
++}
++
++static bool
++j3_mali_compute_program_as0(vm_offset_t mali)
++{
++	struct j3_mali_compute_ctx *c = &j3_mali_compute;
++	if (!c->pt.count) {
++		return false;
++	}
++	j3_mali_as0_disable(mali);
++	if (!j3_gpu_wait_mask(mali, J3_MALI_AS0_STATUS,
++	    J3_MALI_AS_ACTIVE, 0, 1000000u)) {
++		return false;
++	}
++	j3_gpu_write(mali, J3_MALI_MMU_IRQ_CLEAR,
++	    J3_MALI_MMU_PAGE_FAULT0 | J3_MALI_MMU_BUS_ERROR0);
++	j3_gpu_write(mali, J3_MALI_AS0_MEMATTR_LO,
++	    (uint32_t)J3_MALI_MEMATTR_UPSTREAM);
++	j3_gpu_write(mali, J3_MALI_AS0_MEMATTR_HI,
++	    (uint32_t)(J3_MALI_MEMATTR_UPSTREAM >> 32));
++	uint64_t transtab = c->pt.page[0].pa |
++	    J3_MALI_AS_TABLE | J3_MALI_AS_READ_INNER;
++	j3_gpu_write(mali, J3_MALI_AS0_TRANSTAB_LO, (uint32_t)transtab);
++	j3_gpu_write(mali, J3_MALI_AS0_TRANSTAB_HI, (uint32_t)(transtab >> 32));
++	j3_gpu_write(mali, J3_MALI_AS0_COMMAND, J3_MALI_AS_UPDATE);
++	if (!j3_gpu_wait_mask(mali, J3_MALI_AS0_STATUS,
++	    J3_MALI_AS_ACTIVE, 0, 1000000u)) {
++		return false;
++	}
++	return true;
++}
++
++static void
++j3_mali_compute_recover(vm_offset_t mali, uint32_t jobRaw, uint32_t mmuRaw)
++{
++	if (j3_gpu_read(mali, J3_MALI_JS1_STATUS) == 0x08u) {
++		j3_gpu_write(mali, J3_MALI_JS1_COMMAND, J3_MALI_JS_HARD_STOP);
++		for (unsigned spin = 0; spin < 200000u; spin++) {
++			if (j3_gpu_read(mali, J3_MALI_JS1_STATUS) != 0x08u) {
++				break;
++			}
++			__asm__ volatile("yield");
++		}
++	}
++	j3_gpu_write(mali, J3_MALI_JOB_IRQ_CLEAR,
++	    jobRaw & (J3_MALI_JOB_DONE1 | J3_MALI_JOB_FAIL1));
++	j3_gpu_write(mali, J3_MALI_MMU_IRQ_CLEAR,
++	    mmuRaw & (J3_MALI_MMU_PAGE_FAULT0 | J3_MALI_MMU_BUS_ERROR0));
++}
++
++static bool
++j3_mali_compute_init(vm_offset_t mali)
++{
++	struct j3_mali_compute_ctx *c = &j3_mali_compute;
++	if (c->initialized) {
++		return !c->disabled;
++	}
++	bzero(c, sizeof(*c));
++	if (j3_mali_pt_alloc(&c->pt) < 0) {
++		return false;
++	}
++	c->resourcePage = IOMallocAligned(4096, 4096);
++	if (!c->resourcePage) {
++		j3_mali_pt_destroy(&c->pt);
++		return false;
++	}
++	bzero(c->resourcePage, 4096);
++	c->resourcePA = (uint64_t)ml_vtophys((vm_offset_t)c->resourcePage);
++	if (!c->resourcePA || (c->resourcePA & 0xfffULL)) {
++		IOFreeAligned(c->resourcePage, 4096);
++		c->resourcePage = NULL;
++		j3_mali_pt_destroy(&c->pt);
++		return false;
++	}
++
++	uint8_t *r = (uint8_t *)c->resourcePage;
++	memcpy(r + J3_MALI_COPY_SHADER_OFF, j3_mali_copy_shader,
++	    sizeof(j3_mali_copy_shader));
++
++	static const uint8_t rsdTemplate[64] = {
++		0x05,0x50,0x34,0x12,0,0,0,0, 0,0,0,0,0,0,0,0,
++		0x01,0x00,0x01,0x00,0,0,0,0, 0,0,0,0,0,0,0,0,
++		0,0,0,0,0,0,0,0, 0,0,0,0,0,0,0,0,
++		0,0,0,0,0,0,0,0, 0,0,0,0,0,0,0,0
++	};
++	memcpy(r + J3_MALI_COPY_RSD_OFF, rsdTemplate, sizeof(rsdTemplate));
++	*(uint64_t *)(r + J3_MALI_COPY_RSD_OFF) =
++	    (J3_MALI_COPY_RES_VA + J3_MALI_COPY_SHADER_OFF) | 5ULL;
++	/* Renderer Properties bit 13: shader has side effects/global stores. */
++	((uint32_t *)(r + J3_MALI_COPY_RSD_OFF))[4] |= (1u << 13);
++
++	static const uint8_t tlsTemplate[32] = {
++		0,0,0,0,0x1f,0,0,0, 0,0,0,0,0,0,0,0,
++		0,0,0,0,0,0,0,0, 0,0,0,0,0,0,0,0
++	};
++	memcpy(r + J3_MALI_COPY_TLS_OFF, tlsTemplate, sizeof(tlsTemplate));
++
++	uint64_t uboDataVA = J3_MALI_COPY_RES_VA + J3_MALI_COPY_UBO_DATA_OFF;
++	*(uint64_t *)(r + J3_MALI_COPY_UBO_DESC_OFF) =
++	    ((uboDataVA >> 4) << 12) | 1ULL;
++
++	static const uint8_t jobTemplate[192] = {
++		0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
++		0x09,0x01,0x01,0,0,0,0,0,0,0,0,0,0,0,0,0,
++		0xff,0x0f,0x0e,0x00,0xc6,0x18,0x14,0x65,0,0,0,0x24,0,0,0,0,
++		0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
++		0x07,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
++		0,0,0,0,0,0,0,0,0x00,0x80,0x67,0x45,0,0,0,0,
++		0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
++		0,0,0,0,0,0,0,0,0x00,0x60,0x45,0x23,0,0,0,0,
++		0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
++		0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
++		0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
++		0,0,0,0,0,0,0,0,0x00,0x70,0x56,0x34,0,0,0,0,
++		0,0,0,0,0,0,0,0
++	};
++	memcpy(r + J3_MALI_COPY_JOB_OFF, jobTemplate, sizeof(jobTemplate));
++	*(uint64_t *)(r + J3_MALI_COPY_JOB_OFF + 88) =
++	    J3_MALI_COPY_RES_VA + J3_MALI_COPY_UBO_DESC_OFF;
++	*(uint64_t *)(r + J3_MALI_COPY_JOB_OFF + 120) =
++	    J3_MALI_COPY_RES_VA + J3_MALI_COPY_RSD_OFF;
++	*(uint64_t *)(r + J3_MALI_COPY_JOB_OFF + 176) =
++	    J3_MALI_COPY_RES_VA + J3_MALI_COPY_TLS_OFF;
++
++	if (!j3_mali_pt_map_page(&c->pt, J3_MALI_COPY_RES_VA,
++	    c->resourcePA, j3_mali_live_attr)) {
++		return false;
++	}
++	for (uint64_t off = 0; off < J3_MALI_COPY_BYTES; off += 0x1000ULL) {
++		if (!j3_mali_pt_map_page(&c->pt, J3_MALI_COPY_DST_VA + off,
++		    J3_MALI_FB_PA + off, j3_mali_live_attr)) {
++			return false;
++		}
++	}
++	j3_mali_pt_clean(&c->pt);
++	flush_dcache64((addr64_t)(uintptr_t)c->resourcePage, 4096, FALSE);
++	if (!j3_mali_compute_program_as0(mali)) {
++		return false;
++	}
++	c->initialized = true;
++	IOLog("J3 GPU: full-frame compute ARMED JS1 shader=112B words=%u ptpages=%u\n",
++	    J3_MALI_COPY_WORDS, c->pt.count);
++	return true;
++}
++
++static bool
++j3_mali_present_surface(SweetSurface *s, uintptr_t src)
++{
++	if (!j3_mali_live_ready || !j3_mali_live_base || !s || !s->memory ||
++	    j3_mali_compute.disabled || (s->offset & 0xfffu)) {
++		return false;
++	}
++	vm_offset_t mali = j3_mali_live_base;
++	if (!j3_mali_compute_init(mali)) {
++		j3_mali_compute.disabled = true;
++		IOLog("J3 GPU: full-frame compute FALLBACK init failed\n");
++		return false;
++	}
++	struct j3_mali_compute_ctx *c = &j3_mali_compute;
++
++	if (c->sourceMemory != s->memory || c->sourceOffset != s->offset) {
++		if (!j3_mali_map_md_range(&c->pt, s->memory, s->offset,
++		    J3_MALI_COPY_SRC_VA, J3_MALI_COPY_BYTES,
++		    j3_mali_live_attr)) {
++			IOLog("J3 GPU: full-frame compute FALLBACK source map failed id=%u off=%u\n",
++			    s->id, s->offset);
++			c->disabled = true;
++			return false;
++		}
++		j3_mali_pt_clean(&c->pt);
++		if (!j3_mali_compute_program_as0(mali)) {
++			c->disabled = true;
++			return false;
++		}
++		if (c->sourceMemory) {
++			c->sourceMemory->release();
++		}
++		s->memory->retain();
++		c->sourceMemory = s->memory;
++		c->sourceOffset = s->offset;
++	}
++
++	uint8_t *r = (uint8_t *)c->resourcePage;
++	uint64_t *ubo = (uint64_t *)(r + J3_MALI_COPY_UBO_DATA_OFF);
++	ubo[0] = J3_MALI_COPY_SRC_VA;
++	ubo[1] = J3_MALI_COPY_DST_VA;
++	*(uint32_t *)&ubo[2] = J3_MALI_COPY_WORDS;
++
++	/* CPU only publishes descriptors/cache state; Mali moves every pixel. */
++	flush_dcache64((addr64_t)(src + s->offset),
++	    (unsigned)J3_MALI_COPY_BYTES, FALSE);
++	flush_dcache64((addr64_t)(uintptr_t)c->resourcePage, 4096, FALSE);
++	__asm__ volatile("dsb sy" ::: "memory");
++
++	j3_gpu_write(mali, J3_MALI_JOB_IRQ_CLEAR,
++	    J3_MALI_JOB_DONE1 | J3_MALI_JOB_FAIL1);
++	j3_gpu_write(mali, J3_MALI_MMU_IRQ_CLEAR,
++	    J3_MALI_MMU_PAGE_FAULT0 | J3_MALI_MMU_BUS_ERROR0);
++	uint64_t jobVA = J3_MALI_COPY_RES_VA + J3_MALI_COPY_JOB_OFF;
++	j3_gpu_write(mali, J3_MALI_JS1_HEAD_NEXT_LO, (uint32_t)jobVA);
++	j3_gpu_write(mali, J3_MALI_JS1_HEAD_NEXT_HI, (uint32_t)(jobVA >> 32));
++	uint32_t shader = j3_gpu_read(mali, J3_MALI_SHADER_READY);
++	j3_gpu_write(mali, J3_MALI_JS1_AFFINITY_NEXT_LO, shader ? shader : 1u);
++	j3_gpu_write(mali, J3_MALI_JS1_AFFINITY_NEXT_HI, 0);
++	j3_gpu_write(mali, J3_MALI_JS1_CONFIG_NEXT, J3_MALI_JS_CFG);
++	j3_gpu_write(mali, J3_MALI_JS1_COMMAND_NEXT, J3_MALI_JS_START);
++
++	uint32_t irq = 0, mmuRaw = 0;
++	bool done = false;
++	for (unsigned spin = 0; spin < 2000000u; spin++) {
++		mmuRaw = j3_gpu_read(mali, J3_MALI_MMU_IRQ_RAWSTAT);
++		if (mmuRaw & (J3_MALI_MMU_PAGE_FAULT0 | J3_MALI_MMU_BUS_ERROR0)) {
++			break;
++		}
++		irq = j3_gpu_read(mali, J3_MALI_JOB_IRQ_RAWSTAT);
++		if (irq & (J3_MALI_JOB_DONE1 | J3_MALI_JOB_FAIL1)) {
++			done = true;
++			break;
++		}
++		__asm__ volatile("yield");
++	}
++
++	if (!done || (irq & J3_MALI_JOB_FAIL1) ||
++	    (mmuRaw & (J3_MALI_MMU_PAGE_FAULT0 | J3_MALI_MMU_BUS_ERROR0))) {
++		IOLog("J3 GPU: full-frame compute FALLBACK irq=%#x mmu=%#x js1=%#x fault=%#x@%#x:%08x\n",
++		    irq, mmuRaw, j3_gpu_read(mali, J3_MALI_JS1_STATUS),
++		    j3_gpu_read(mali, J3_MALI_AS0_FAULTSTATUS),
++		    j3_gpu_read(mali, J3_MALI_AS0_FAULTADDRESS_HI),
++		    j3_gpu_read(mali, J3_MALI_AS0_FAULTADDRESS_LO));
++		j3_mali_compute_recover(mali, irq, mmuRaw);
++		c->disabled = true;
++		return false;
++	}
++	j3_gpu_write(mali, J3_MALI_JOB_IRQ_CLEAR,
++	    irq & (J3_MALI_JOB_DONE1 | J3_MALI_JOB_FAIL1));
++	__asm__ volatile("dsb sy" ::: "memory");
++	uint64_t frame = ++j3_mali_present_frames;
++	if (frame <= 8ULL || (frame % 600ULL) == 0) {
++		IOLog("J3 GPU: full-frame MALI PASS frame=%llu JS1 words=%u\n",
++		    frame, J3_MALI_COPY_WORDS);
++	}
++	return true;
++}
+ 
+ /*
+  * Credit-efficient validation ladder. Every stage uses public Midgard
+@@ -1254,14 +1518,16 @@
+ 		}
+ 		if (src != 0 && bpe == 4) {
+ #if defined(ARM64_BOARD_CONFIG_J3Y17LTE)
+ 			if (sx == 0 && sy == 0 && dx == 0 && dy == 0 &&
+ 			    w == (int32_t)fWidth && h == (int32_t)fHeight &&
+ 			    s->bytesPerRow == fRowBytes) {
+-				memcpy((void *)fPixels,
+-				    (const void *)(src + s->offset),
+-				    (size_t)fRowBytes * fHeight);
++				if (!j3_mali_present_surface(s, src)) {
++					memcpy((void *)fPixels,
++					    (const void *)(src + s->offset),
++					    (size_t)fRowBytes * fHeight);
++				}
+ 			} else
+ #endif
+ 			{
+ 			for (int32_t y = 0; y < h; y++) {
+ 				memcpy((void *)(fPixels + (uint64_t)(dy + y) * fRowBytes + (uint64_t)dx * 4),
+@@ -1272,7 +1538,4 @@
+ 		}
+ 		s->release();
+ 	}
+-#if defined(ARM64_BOARD_CONFIG_J3Y17LTE)
+-	j3_mali_present_pulse();
+-#endif
+ }
