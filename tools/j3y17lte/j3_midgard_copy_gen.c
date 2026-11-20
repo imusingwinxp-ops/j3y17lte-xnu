@@ -45,20 +45,13 @@ int main(int argc, char **argv)
    b.shader->info.workgroup_size[0] = 64;
    b.shader->info.workgroup_size[1] = 1;
    b.shader->info.workgroup_size[2] = 1;
-   b.shader->info.num_ubos = 1;
-   b.shader->info.first_ubo_is_default_ubo = true;
-
-   nir_def *zero = nir_imm_int(&b, 0);
-   nir_def *args = nir_load_ubo(&b, 4, 32, zero, zero,
-                                .align_mul = 16,
-                                .align_offset = 0,
-                                .range_base = 0,
-                                .range = 16);
-
-   nir_def *src =
-      nir_pack_64_2x32(&b, nir_channels(&b, args, 0x3));
-   nir_def *dst =
-      nir_pack_64_2x32(&b, nir_channels(&b, args, 0xc));
+   /*
+    * Fixed Mali virtual apertures. XNU remaps these VAs to the current
+    * IOSurface and the physical DECON framebuffer for each presentation.
+    * Keeping addresses out of uniforms removes the entire UBO/push path.
+    */
+   nir_def *src = nir_imm_int64(&b, 0x10000000ULL);
+   nir_def *dst = nir_imm_int64(&b, 0x20000000ULL);
 
    nir_def *gid =
       nir_channel(&b, nir_load_global_invocation_id(&b, 32), 0);
@@ -84,8 +77,7 @@ int main(int argc, char **argv)
    struct pan_shader_info info = {0};
    pan_postprocess_nir(b.shader, &inputs, &info);
 
-   /* Exactly UBO0 is CPU-visible and eligible for Midgard register promotion. */
-   inputs.pushable_ubos = 1u;
+   inputs.pushable_ubos = 0;
 
    struct util_dynarray binary = UTIL_DYNARRAY_INIT;
    pan_shader_compile(b.shader, &inputs, &binary, &info);
@@ -112,6 +104,8 @@ int main(int argc, char **argv)
    fprintf(meta, "LOCAL_SIZE=64,1,1\n");
    fprintf(meta, "FRAME_WORDS=921600\n");
    fprintf(meta, "WORKGROUPS=14400,1,1\n");
+   fprintf(meta, "SOURCE_GPU_VA=0x10000000\n");
+   fprintf(meta, "DEST_GPU_VA=0x20000000\n");
    fprintf(meta, "BINARY_SIZE=%u\n", binary.size);
    fprintf(meta, "FIRST_TAG=%u\n", info.midgard.first_tag);
    fprintf(meta, "WORK_REG_COUNT=%u\n", info.work_reg_count);
