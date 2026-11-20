@@ -1,0 +1,286 @@
+--- a/iokit/Kernel/arm/SweetFramebuffer.cpp
++++ b/iokit/Kernel/arm/SweetFramebuffer.cpp
+@@ -239,6 +239,6 @@
+ #define J3_MALI_PT_LEAF_BLOCK           0x01ULL
+ #define J3_MALI_PT_HAP_READ             (1ULL << 6)
+ #define J3_MALI_PT_HAP_WRITE            (1ULL << 7)
+ #define J3_MALI_PT_SH_OUTER             (2ULL << 8)
+-#define J3_MALI_PT_MAX_PAGES            8u
++#define J3_MALI_PT_MAX_PAGES            16u
+ #define J3_MALI_MEMATTR_UPSTREAM        0x0000000000888d88ULL
+@@ -265,10 +265,15 @@
+ #define J3_MALI_JOB_DONE1               (1u << 1)
+ #define J3_MALI_JOB_FAIL1               (1u << 17)
+ #define J3_MALI_COPY_BYTES               0x384000ULL
+ #define J3_MALI_COPY_WORDS               921600u
+ #define J3_MALI_COPY_SRC_VA              0x10000000ULL
++#define J3_MALI_COPY_SRC_STRIDE          0x00800000ULL
++#define J3_MALI_SOURCE_SLOTS             3u
++#define J3_MALI_PRESENT_FAIL             0
++#define J3_MALI_PRESENT_SUBMITTED        1
++#define J3_MALI_PRESENT_BUSY             2
+ #define J3_MALI_COPY_DST_VA              0x10400000ULL
+ #define J3_MALI_COPY_RES_VA              0x107f0000ULL
+ #define J3_MALI_COPY_SHADER_OFF          0x000u
+ #define J3_MALI_COPY_RSD_OFF             0x100u
+ #define J3_MALI_COPY_TLS_OFF             0x140u
+@@ -365,10 +365,18 @@
+ 	struct j3_mali_pt pt;
+ 	void *resourcePage;
+ 	uint64_t resourcePA;
+-	IOMemoryDescriptor *sourceMemory;
+-	uint32_t sourceOffset;
++	IOMemoryDescriptor *sourceMemory[J3_MALI_SOURCE_SLOTS];
++	uint32_t sourceOffset[J3_MALI_SOURCE_SLOTS];
++	unsigned nextSourceSlot;
+ 	bool initialized;
+ 	bool disabled;
++	bool inFlight;
++	uint64_t submittedFrames;
++	uint64_t completedFrames;
++	uint64_t busyFrames;
++	uint64_t sourceHits;
++	uint64_t sourceRemaps;
+ };
+ 
+ static struct j3_mali_compute_ctx j3_mali_compute;
++static uint64_t j3_mali_cpu_fallbacks;
+@@ -840,5 +840,7 @@
+ 	c->initialized = true;
+ 	IOLog("J3 GPU: full-frame compute ARMED JS1 shader=112B words=%u ptpages=%u\n",
+ 	    J3_MALI_COPY_WORDS, c->pt.count);
++	IOLog("J3 GPU: async present ARMED slots=%u nonblocking=1\n",
++	    J3_MALI_SOURCE_SLOTS);
+ 	return true;
+ }
+@@ -846,47 +848,132 @@
+-static bool
+-j3_mali_present_surface(SweetSurface *s, uintptr_t src)
++static int
++j3_mali_compute_poll(vm_offset_t mali, bool wait)
++{
++	struct j3_mali_compute_ctx *c = &j3_mali_compute;
++	uint32_t irq = 0;
++	uint32_t mmuRaw = 0;
++	unsigned limit = wait ? 2000000u : 1u;
++
++	for (unsigned spin = 0; spin < limit; spin++) {
++		mmuRaw = j3_gpu_read(mali, J3_MALI_MMU_IRQ_RAWSTAT);
++		irq = j3_gpu_read(mali, J3_MALI_JOB_IRQ_RAWSTAT);
++		if ((mmuRaw & (J3_MALI_MMU_PAGE_FAULT0 | J3_MALI_MMU_BUS_ERROR0)) ||
++		    (irq & J3_MALI_JOB_FAIL1)) {
++			IOLog("J3 GPU: async present FALLBACK irq=%#x mmu=%#x js1=%#x fault=%#x@%#x:%08x\n",
++			    irq, mmuRaw, j3_gpu_read(mali, J3_MALI_JS1_STATUS),
++			    j3_gpu_read(mali, J3_MALI_AS0_FAULTSTATUS),
++			    j3_gpu_read(mali, J3_MALI_AS0_FAULTADDRESS_HI),
++			    j3_gpu_read(mali, J3_MALI_AS0_FAULTADDRESS_LO));
++			j3_mali_compute_recover(mali, irq, mmuRaw);
++			c->inFlight = false;
++			c->disabled = true;
++			return J3_MALI_PRESENT_FAIL;
++		}
++		if (irq & J3_MALI_JOB_DONE1) {
++			j3_gpu_write(mali, J3_MALI_JOB_IRQ_CLEAR, J3_MALI_JOB_DONE1);
++			__asm__ volatile("dsb sy" ::: "memory");
++			c->inFlight = false;
++			c->completedFrames++;
++			uint64_t frame = ++j3_mali_present_frames;
++			if (frame <= 8ULL || (frame % 120ULL) == 0) {
++				IOLog("J3 GPU: full-frame MALI PASS frame=%llu JS1 words=%u\n",
++				    frame, J3_MALI_COPY_WORDS);
++			}
++			if (frame == 8ULL || (frame % 120ULL) == 0) {
++				IOLog("J3 GPU: present stats submit=%llu done=%llu busy=%llu hit=%llu remap=%llu cpu=%llu slots=%u\n",
++				    c->submittedFrames, c->completedFrames, c->busyFrames,
++				    c->sourceHits, c->sourceRemaps, j3_mali_cpu_fallbacks,
++				    J3_MALI_SOURCE_SLOTS);
++			}
++			return J3_MALI_PRESENT_SUBMITTED;
++		}
++		if (wait) {
++			__asm__ volatile("yield");
++		}
++	}
++
++	if (wait) {
++		IOLog("J3 GPU: async present FALLBACK timeout js1=%#x irq=%#x mmu=%#x\n",
++		    j3_gpu_read(mali, J3_MALI_JS1_STATUS), irq, mmuRaw);
++		j3_mali_compute_recover(mali, irq, mmuRaw);
++		c->inFlight = false;
++		c->disabled = true;
++		return J3_MALI_PRESENT_FAIL;
++	}
++
++	c->busyFrames++;
++	return J3_MALI_PRESENT_BUSY;
++}
++
++static int
++j3_mali_present_surface(SweetSurface *s, uintptr_t src, bool async)
+ {
+ 	if (!j3_mali_live_ready || !j3_mali_live_base || !s || !s->memory ||
+-	    j3_mali_compute.disabled || (s->offset & 0xfffu)) {
+-		return false;
++	    j3_mali_compute.disabled || (s->offset & 0xfffu) ||
++	    (uint64_t)s->offset + J3_MALI_COPY_BYTES > s->memory->getLength()) {
++		return J3_MALI_PRESENT_FAIL;
+ 	}
+ 	vm_offset_t mali = j3_mali_live_base;
+ 	if (!j3_mali_compute_init(mali)) {
+ 		j3_mali_compute.disabled = true;
+ 		IOLog("J3 GPU: full-frame compute FALLBACK init failed\n");
+-		return false;
++		return J3_MALI_PRESENT_FAIL;
+ 	}
+ 	struct j3_mali_compute_ctx *c = &j3_mali_compute;
+ 
+-	if (c->sourceMemory != s->memory || c->sourceOffset != s->offset) {
++	if (c->inFlight) {
++		int state = j3_mali_compute_poll(mali, !async);
++		if (state != J3_MALI_PRESENT_SUBMITTED) {
++			return state;
++		}
++	}
++
++	unsigned slot = J3_MALI_SOURCE_SLOTS;
++	for (unsigned i = 0; i < J3_MALI_SOURCE_SLOTS; i++) {
++		if (c->sourceMemory[i] == s->memory &&
++		    c->sourceOffset[i] == s->offset) {
++			slot = i;
++			break;
++		}
++	}
++	if (slot == J3_MALI_SOURCE_SLOTS) {
++		slot = c->nextSourceSlot++ % J3_MALI_SOURCE_SLOTS;
++		uint64_t sourceVA = J3_MALI_COPY_SRC_VA +
++		    (uint64_t)slot * J3_MALI_COPY_SRC_STRIDE;
+ 		if (!j3_mali_map_md_range(&c->pt, s->memory, s->offset,
+-		    J3_MALI_COPY_SRC_VA, J3_MALI_COPY_BYTES,
+-		    j3_mali_live_attr)) {
+-			IOLog("J3 GPU: full-frame compute FALLBACK source map failed id=%u off=%u\n",
+-			    s->id, s->offset);
++		    sourceVA, J3_MALI_COPY_BYTES, j3_mali_live_attr)) {
++			IOLog("J3 GPU: full-frame compute FALLBACK source map failed id=%u off=%u slot=%u\n",
++			    s->id, s->offset, slot);
+ 			c->disabled = true;
+-			return false;
++			return J3_MALI_PRESENT_FAIL;
+ 		}
+ 		j3_mali_pt_clean(&c->pt);
+ 		if (!j3_mali_compute_program_as0(mali)) {
+ 			c->disabled = true;
+-			return false;
++			return J3_MALI_PRESENT_FAIL;
+ 		}
+-		if (c->sourceMemory) {
+-			c->sourceMemory->release();
++		if (c->sourceMemory[slot]) {
++			c->sourceMemory[slot]->release();
+ 		}
+ 		s->memory->retain();
+-		c->sourceMemory = s->memory;
+-		c->sourceOffset = s->offset;
++		c->sourceMemory[slot] = s->memory;
++		c->sourceOffset[slot] = s->offset;
++		c->sourceRemaps++;
++	} else {
++		c->sourceHits++;
+ 	}
+ 
+ 	uint8_t *r = (uint8_t *)c->resourcePage;
+ 	uint64_t *ubo = (uint64_t *)(r + J3_MALI_COPY_UBO_DATA_OFF);
+-	ubo[0] = J3_MALI_COPY_SRC_VA;
++	ubo[0] = J3_MALI_COPY_SRC_VA +
++	    (uint64_t)slot * J3_MALI_COPY_SRC_STRIDE;
+ 	ubo[1] = J3_MALI_COPY_DST_VA;
+ 	*(uint32_t *)&ubo[2] = J3_MALI_COPY_WORDS;
+ 
+-	/* CPU only publishes descriptors/cache state; Mali moves every pixel. */
++	/*
++	 * The IOSurface is still CPU-rendered, so make its writes visible to
++	 * Midgard. 098 avoids page-table rebuilds and synchronous waiting; this
++	 * cache clean is the remaining CPU-side bulk operation.
++	 */
+ 	flush_dcache64((addr64_t)(src + s->offset),
+ 	    (unsigned)J3_MALI_COPY_BYTES, FALSE);
+ 	flush_dcache64((addr64_t)(uintptr_t)c->resourcePage, 4096, FALSE);
+@@ -904,40 +991,11 @@
+ 	j3_gpu_write(mali, J3_MALI_JS1_AFFINITY_NEXT_HI, 0);
+ 	j3_gpu_write(mali, J3_MALI_JS1_CONFIG_NEXT, J3_MALI_JS_CFG);
+ 	j3_gpu_write(mali, J3_MALI_JS1_COMMAND_NEXT, J3_MALI_JS_START);
++	c->inFlight = true;
++	c->submittedFrames++;
+ 
+-	uint32_t irq = 0, mmuRaw = 0;
+-	bool done = false;
+-	for (unsigned spin = 0; spin < 2000000u; spin++) {
+-		mmuRaw = j3_gpu_read(mali, J3_MALI_MMU_IRQ_RAWSTAT);
+-		if (mmuRaw & (J3_MALI_MMU_PAGE_FAULT0 | J3_MALI_MMU_BUS_ERROR0)) {
+-			break;
+-		}
+-		irq = j3_gpu_read(mali, J3_MALI_JOB_IRQ_RAWSTAT);
+-		if (irq & (J3_MALI_JOB_DONE1 | J3_MALI_JOB_FAIL1)) {
+-			done = true;
+-			break;
+-		}
+-		__asm__ volatile("yield");
++	if (async) {
++		return J3_MALI_PRESENT_SUBMITTED;
+ 	}
+-
+-	if (!done || (irq & J3_MALI_JOB_FAIL1) ||
+-	    (mmuRaw & (J3_MALI_MMU_PAGE_FAULT0 | J3_MALI_MMU_BUS_ERROR0))) {
+-		IOLog("J3 GPU: full-frame compute FALLBACK irq=%#x mmu=%#x js1=%#x fault=%#x@%#x:%08x\n",
+-		    irq, mmuRaw, j3_gpu_read(mali, J3_MALI_JS1_STATUS),
+-		    j3_gpu_read(mali, J3_MALI_AS0_FAULTSTATUS),
+-		    j3_gpu_read(mali, J3_MALI_AS0_FAULTADDRESS_HI),
+-		    j3_gpu_read(mali, J3_MALI_AS0_FAULTADDRESS_LO));
+-		j3_mali_compute_recover(mali, irq, mmuRaw);
+-		c->disabled = true;
+-		return false;
+-	}
+-	j3_gpu_write(mali, J3_MALI_JOB_IRQ_CLEAR,
+-	    irq & (J3_MALI_JOB_DONE1 | J3_MALI_JOB_FAIL1));
+-	__asm__ volatile("dsb sy" ::: "memory");
+-	uint64_t frame = ++j3_mali_present_frames;
+-	if (frame <= 8ULL || (frame % 600ULL) == 0) {
+-		IOLog("J3 GPU: full-frame MALI PASS frame=%llu JS1 words=%u\n",
+-		    frame, J3_MALI_COPY_WORDS);
+-	}
+-	return true;
++	return j3_mali_compute_poll(mali, true);
+ }
+@@ -1518,9 +1605,16 @@
+ 		if (src != 0 && bpe == 4) {
+ #if defined(ARM64_BOARD_CONFIG_J3Y17LTE)
+-			if (sx == 0 && sy == 0 && dx == 0 && dy == 0 &&
++			bool singleLayer = mask != 0 && (mask & (mask - 1u)) == 0;
++			bool fullRect = sx == 0 && sy == 0 && dx == 0 && dy == 0 &&
+ 			    w == (int32_t)fWidth && h == (int32_t)fHeight &&
+-			    s->bytesPerRow == fRowBytes) {
+-				if (!j3_mali_present_surface(s, src)) {
++			    s->bytesPerRow == fRowBytes;
++			bool wholeSurface = singleLayer &&
++			    s->width == fWidth && s->height == fHeight &&
++			    s->bytesPerRow == fRowBytes;
++			if (fullRect || wholeSurface) {
++				int present = j3_mali_present_surface(s, src, singleLayer);
++				if (present == J3_MALI_PRESENT_FAIL) {
++					j3_mali_cpu_fallbacks++;
+ 					memcpy((void *)fPixels,
+ 					    (const void *)(src + s->offset),
+ 					    (size_t)fRowBytes * fHeight);
+@@ -1528,6 +1622,12 @@
+ 			} else
+ #endif
+ 			{
++#if defined(ARM64_BOARD_CONFIG_J3Y17LTE)
++			if (j3_mali_compute.inFlight && j3_mali_live_base) {
++				(void)j3_mali_compute_poll(j3_mali_live_base, true);
++			}
++			j3_mali_cpu_fallbacks++;
++#endif
+ 			for (int32_t y = 0; y < h; y++) {
+ 				memcpy((void *)(fPixels + (uint64_t)(dy + y) * fRowBytes + (uint64_t)dx * 4),
+ 				    (const void *)(src + s->offset + (uint64_t)(sy + y) * s->bytesPerRow + (uint64_t)sx * 4),
+ 				    (size_t)w * 4);
