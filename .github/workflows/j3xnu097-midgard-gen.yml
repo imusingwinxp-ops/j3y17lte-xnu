@@ -26,7 +26,7 @@ jobs:
 
       - name: Fetch pinned Mesa
         run: |
-          git clone https://github.com/mesa3d/mesa.git mesa
+          git clone https://gitlab.freedesktop.org/mesa/mesa.git mesa
           git -C mesa fetch origin e24dc5bd1e7fe6101bdc866fb16a15a8fcae1aae
           git -C mesa checkout --detach e24dc5bd1e7fe6101bdc866fb16a15a8fcae1aae
           test "$(git -C mesa rev-parse HEAD)" = "e24dc5bd1e7fe6101bdc866fb16a15a8fcae1aae"
