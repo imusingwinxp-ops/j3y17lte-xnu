@@ -1,6 +1,6 @@
 --- a/iokit/Kernel/arm/SweetFramebuffer.cpp
 +++ b/iokit/Kernel/arm/SweetFramebuffer.cpp
-@@ -244,9 +244,53 @@
+@@ -244,10 +244,54 @@
  static vm_offset_t j3_mali_live_base;
  static bool j3_mali_live_ready;
  static unsigned j3_mali_live_attr;
@@ -58,7 +58,7 @@
  
  static uint32_t
  j3_gpu_read(vm_offset_t base, uint32_t offset)
-@@ -369,8 +413,11 @@
+@@ -369,9 +413,12 @@
  	leaf[slot] = physical |
  	    (((uint64_t)memattrIndex & 7ULL) << 2) |
  	    J3_MALI_PT_HAP_READ | J3_MALI_PT_HAP_WRITE |
@@ -73,7 +73,7 @@
  	return true;
  }
  
-@@ -638,61 +685,278 @@
+@@ -638,62 +685,279 @@
 -/*
 - * J3XNU095: once the boot-time RAM and framebuffer jobs have both proved the
 - * corrected MMU path, keep exercising JS0 from the live presentation path.
