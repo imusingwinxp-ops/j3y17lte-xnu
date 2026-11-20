@@ -1,0 +1,175 @@
+--- a/iokit/Kernel/arm/SweetFramebuffer.cpp
++++ b/iokit/Kernel/arm/SweetFramebuffer.cpp
+@@ -235,11 +235,12 @@
+ #define J3_MALI_AS_READ_INNER           0x04u
+ #define J3_MALI_PT_INVALID              0x02ULL
+ #define J3_MALI_PT_PTE                  0x03ULL
+-#define J3_MALI_PT_ATE                  0x01ULL
+-#define J3_MALI_PT_RD                   (1ULL << 6)
+-#define J3_MALI_PT_WR                   (1ULL << 7)
++#define J3_MALI_PT_ATE_L3               0x03ULL
++#define J3_MALI_PT_ACCESS_RW            (1ULL << 6)
++#define J3_MALI_PT_ACCESS_FLAG          (1ULL << 10)
+ #define J3_MALI_PT_MAX_PAGES            8u
+ #define J3_MALI_MEMATTR_R28             0x0000008d884d4f48ULL
+ 
++static vm_offset_t j3_mali_live_base;
++static bool j3_mali_live_ready;
++static unsigned j3_mali_live_attr;
++static void *j3_mali_present_page;
++static volatile uint64_t *j3_mali_present_fence;
++static uint64_t j3_mali_present_fence_pa;
++static uint64_t j3_mali_present_frames;
++
+ static uint32_t
+ j3_gpu_read(vm_offset_t base, uint32_t offset)
+ {
+@@ -356,9 +357,9 @@
+ 	volatile uint64_t *leaf =
+ 	    (volatile uint64_t *)pt->page[table].va;
+ 	unsigned slot = (unsigned)((gpuVA >> 12) & 0x1ffULL);
+ 	leaf[slot] = physical |
+ 	    (((uint64_t)memattrIndex & 7ULL) << 2) |
+-	    J3_MALI_PT_RD | J3_MALI_PT_WR | J3_MALI_PT_ATE;
++	    J3_MALI_PT_ACCESS_RW | J3_MALI_PT_ACCESS_FLAG |
++	    J3_MALI_PT_ATE_L3;
+ 	return true;
+ }
+ 
+@@ -620,6 +621,10 @@
+ 		IOLog("J3 GPU: framebuffer GPU write %s old=%#llx gpu=%#llx target=%#llx restored=yes attr=%u\n",
+ 		    fbVerified ? "PASS" : "FAILED", old, gpu, fbTarget,
+ 		    chosenAttr);
+ 	}
++	if (ramVerified && fbVerified) {
++		j3_mali_live_attr = chosenAttr;
++	}
+ 
+ 	IOLog("J3 GPU: real-job summary RAM=%s FB=%s; CPU present remains active\n",
+ 	    ramVerified ? "PASS" : "FAIL", fbVerified ? "PASS" : "FAIL");
+ 	return ramVerified && fbVerified;
+ }
+ 
++/*
++ * J3XNU095: once the boot-time RAM and framebuffer jobs have both proved the
++ * corrected MMU path, keep exercising JS0 from the live presentation path.
++ * This deliberately uses a tiny timestamp fence rather than touching visible
++ * pixels. If a live job ever faults, disable only this optional path and leave
++ * the CPU framebuffer fallback running.
++ */
++static void
++j3_mali_present_pulse(void)
++{
++	if (!j3_mali_live_ready || !j3_mali_live_base) {
++		return;
++	}
++	uint64_t frame = ++j3_mali_present_frames;
++	if ((frame % 120ULL) != 0) {
++		return;
++	}
++
++	if (!j3_mali_present_page) {
++		j3_mali_present_page = IOMallocAligned(4096, 4096);
++		if (!j3_mali_present_page) {
++			IOLog("J3 GPU: live present DISABLED fence allocation failed\n");
++			j3_mali_live_ready = false;
++			return;
++		}
++		bzero(j3_mali_present_page, 4096);
++		j3_mali_present_fence =
++		    (volatile uint64_t *)((uintptr_t)j3_mali_present_page + 0x100);
++		j3_mali_present_fence_pa =
++		    (uint64_t)ml_vtophys((vm_offset_t)(uintptr_t)j3_mali_present_fence);
++		if (!j3_mali_present_fence_pa) {
++			IOLog("J3 GPU: live present DISABLED fence PA unavailable\n");
++			IOFreeAligned(j3_mali_present_page, 4096);
++			j3_mali_present_page = NULL;
++			j3_mali_present_fence = NULL;
++			j3_mali_live_ready = false;
++			return;
++		}
++	}
++
++	*j3_mali_present_fence = 0;
++	flush_dcache64((addr64_t)(uintptr_t)j3_mali_present_page, 4096, FALSE);
++	bool mmuFault = false;
++	bool ok = j3_mali_write_value(j3_mali_live_base,
++	    j3_mali_present_fence_pa, J3_MALI_WRITE_TIMESTAMP,
++	    j3_mali_live_attr, "live-present fence", &mmuFault);
++	flush_dcache64((addr64_t)(uintptr_t)j3_mali_present_page, 4096, FALSE);
++	uint64_t stamp = *j3_mali_present_fence;
++	if (!ok || stamp == 0) {
++		IOLog("J3 GPU: live present FALLBACK frame=%llu ok=%d stamp=%#llx mmufault=%d\n",
++		    frame, ok, stamp, mmuFault);
++		j3_mali_live_ready = false;
++		return;
++	}
++	if (frame <= 360ULL || (frame % 600ULL) == 0) {
++		IOLog("J3 GPU: live present MALI frame=%llu stamp=%#llx attr=%u\n",
++		    frame, stamp, j3_mali_live_attr);
++	}
++}
++
+@@ -711,6 +780,13 @@
+ 	bool jobsOK = j3_mali_real_job_tests(mali);
+ 	IOLog("J3 GPU: real jobs %s; framebuffer presentation still CPU\n",
+ 	    jobsOK ? "PASS" : "FAILED");
++	if (jobsOK) {
++		j3_mali_live_base = mali;
++		j3_mali_live_ready = true;
++		IOLog("J3 GPU: live present ARMED attr=%u; retaining shader/L2 power\n",
++		    j3_mali_live_attr);
++		return true;
++	}
+ 
+ 	/* Return to a low-power diagnostic state: shaders first, then L2.
+ 	 * The documented Midgard PM sequence powers the tiler down with L2. */
+@@ -946,9 +1022,17 @@
+ 	if (fVsync == NULL || fWorkLoop->addEventSource(fVsync) != kIOReturnSuccess) {
+ 		IOLog("SWEET FB: no vsync timer\n");
+ 		return false;
+ 	}
++#if defined(ARM64_BOARD_CONFIG_J3Y17LTE)
++	uint32_t hz = 60;
++	PE_parse_boot_argn("j3fb_hz", &hz, sizeof(hz));
++#else
+ 	uint32_t hz = 10;
+ 	PE_parse_boot_argn("sweetfb_hz", &hz, sizeof(hz));
++#endif
+ 	fFlushTicks = (hz == 0 || hz >= 60) ? 1 : 60 / hz;
++#if defined(ARM64_BOARD_CONFIG_J3Y17LTE)
++	IOLog("J3 FB: present cadence target=%uHz ticks=%u\n",
++	    hz == 0 || hz >= 60 ? 60 : 60 / fFlushTicks, fFlushTicks);
++#endif
+ 	fVsync->setTimeoutUS(SWEET_FB_VSYNC_US);
+ 
+ 	setProperty(kIOUserClientClassKey, "IOMobileFramebufferUserClient");
+@@ -1163,12 +1247,27 @@
+ 		if (w <= 0 || h <= 0 || s->elementWidth != 1 || s->elementHeight != 1 ||
+ 		    s->memory == NULL || last > s->memory->getLength()) {
+ 			src = 0;
+ 		}
+ 		if (src != 0 && bpe == 4) {
++#if defined(ARM64_BOARD_CONFIG_J3Y17LTE)
++			if (sx == 0 && sy == 0 && dx == 0 && dy == 0 &&
++			    w == (int32_t)fWidth && h == (int32_t)fHeight &&
++			    s->bytesPerRow == fRowBytes) {
++				memcpy((void *)fPixels,
++				    (const void *)(src + s->offset),
++				    (size_t)fRowBytes * fHeight);
++			} else
++#endif
++			{
+ 			for (int32_t y = 0; y < h; y++) {
+ 				memcpy((void *)(fPixels + (uint64_t)(dy + y) * fRowBytes + (uint64_t)dx * 4),
+ 				    (const void *)(src + s->offset + (uint64_t)(sy + y) * s->bytesPerRow + (uint64_t)sx * 4),
+ 				    (size_t)w * 4);
+ 			}
++			}
+ 		}
+ 		s->release();
+ 	}
++#if defined(ARM64_BOARD_CONFIG_J3Y17LTE)
++	j3_mali_present_pulse();
++#endif
+ }
