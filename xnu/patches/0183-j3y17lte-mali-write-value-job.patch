@@ -308,7 +308,7 @@
 +#define J3_MALI_AS_UPDATE               0x1u
 +#define J3_MALI_AS_ACTIVE               0x1u
 +#define J3_MALI_JS_START                0x1u
-+#define J3_MALI_JS_CFG                  ((3u << 8) | (3u << 12) | (8u << 16))
++#define J3_MALI_JS_CFG                  ((3u << 8) | (1u << 10) | (3u << 12) | (8u << 16))
 +#define J3_MALI_JOB_DONE0               (1u << 0)
 +#define J3_MALI_JOB_FAIL0               (1u << 16)
 +#define J3_MALI_JOB_TYPE_WRITE_VALUE    2u
