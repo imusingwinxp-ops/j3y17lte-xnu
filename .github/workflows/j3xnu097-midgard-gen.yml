@@ -53,10 +53,10 @@ jobs:
               inc_panfrost,
             ],
             dependencies : [
+              idep_vtn,
               idep_nir,
               idep_mesautil,
-              idep_bi_opcodes_h,
-              dep_libdrm,
+              libpanfrost_dep,
             ],
             link_with : [
               libpanfrost_compiler,
