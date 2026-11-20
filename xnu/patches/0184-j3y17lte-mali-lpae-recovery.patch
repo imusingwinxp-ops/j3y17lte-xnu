@@ -1,0 +1,727 @@
+--- a/iokit/Kernel/arm/SweetFramebuffer.cpp
++++ b/iokit/Kernel/arm/SweetFramebuffer.cpp
+@@ -222,245 +222,485 @@
+ #define J3_MALI_FB_H                    1280ULL
+ #define J3_MALI_FB_W                    720ULL
+ 
+-static uint32_t
+-j3_gpu_read(vm_offset_t base, uint32_t offset)
+-{
+-	return *(volatile uint32_t *)(base + offset);
+-}
+-
+-static void
+-j3_gpu_write(vm_offset_t base, uint32_t offset, uint32_t value)
+-{
+-	*(volatile uint32_t *)(base + offset) = value;
+-	__asm__ volatile("dsb sy" ::: "memory");
+-}
+-
+-static void
+-j3_gpu_rmw(vm_offset_t base, uint32_t offset, uint32_t mask, uint32_t value)
+-{
+-	uint32_t old = j3_gpu_read(base, offset);
+-	j3_gpu_write(base, offset, (old & ~mask) | (value & mask));
+-}
+-
+-static bool
+-j3_gpu_wait_mask(vm_offset_t base, uint32_t offset, uint32_t mask,
+-    uint32_t want, unsigned spins)
+-{
+-	for (unsigned n = 0; n < spins; n++) {
+-		if ((j3_gpu_read(base, offset) & mask) == want) {
+-			return true;
+-		}
+-		__asm__ volatile("yield");
+-	}
+-	return false;
+-}
+-
+-static uint64_t
+-j3_gpu_read64(vm_offset_t base, uint32_t lo, uint32_t hi)
+-{
+-	uint32_t h1, h2, l;
+-	do {
+-		h1 = j3_gpu_read(base, hi);
+-		l = j3_gpu_read(base, lo);
+-		h2 = j3_gpu_read(base, hi);
+-	} while (h1 != h2);
+-	return ((uint64_t)h2 << 32) | l;
+-}
+-
+-/*
+- * Configure T720 legacy LPAE address space 0 in identity mode.  T720's
+- * public feature table does not advertise the AArch64 MMU feature.
+- */
+-static bool
+-j3_mali_identity_as0(vm_offset_t mali)
+-{
+-	const uint64_t memattr =
+-	    (0x48ULL << 0) | (0x4fULL << 8) | (0x4dULL << 16) |
+-	    (0x88ULL << 24) | (0x8dULL << 32);
+-	if (!j3_gpu_wait_mask(mali, J3_MALI_AS0_STATUS,
+-	    J3_MALI_AS_ACTIVE, 0, 1000000u)) {
+-		IOLog("J3 GPU: identity MMU STOP AS0 busy status=%#x\n",
+-		    j3_gpu_read(mali, J3_MALI_AS0_STATUS));
+-		return false;
+-	}
+-	j3_gpu_write(mali, J3_MALI_MMU_IRQ_CLEAR, 0xffffffffu);
+-	j3_gpu_write(mali, J3_MALI_AS0_MEMATTR_LO, (uint32_t)memattr);
+-	j3_gpu_write(mali, J3_MALI_AS0_MEMATTR_HI, (uint32_t)(memattr >> 32));
+-	j3_gpu_write(mali, J3_MALI_AS0_TRANSTAB_LO, J3_MALI_AS_IDENTITY);
+-	j3_gpu_write(mali, J3_MALI_AS0_TRANSTAB_HI, 0);
+-	j3_gpu_write(mali, J3_MALI_AS0_COMMAND, J3_MALI_AS_UPDATE);
+-	if (!j3_gpu_wait_mask(mali, J3_MALI_AS0_STATUS,
+-	    J3_MALI_AS_ACTIVE, 0, 1000000u)) {
+-		IOLog("J3 GPU: identity MMU STOP UPDATE timeout status=%#x\n",
+-		    j3_gpu_read(mali, J3_MALI_AS0_STATUS));
+-		return false;
+-	}
+-	IOLog("J3 GPU: identity MMU PASS transtab=%#x memattr=%#x:%08x\n",
+-	    j3_gpu_read(mali, J3_MALI_AS0_TRANSTAB_LO),
+-	    j3_gpu_read(mali, J3_MALI_AS0_MEMATTR_HI),
+-	    j3_gpu_read(mali, J3_MALI_AS0_MEMATTR_LO));
+-	return true;
+-}
+-
+-static void
+-j3_mali_as0_unmap(vm_offset_t mali)
+-{
+-	j3_gpu_write(mali, J3_MALI_AS0_TRANSTAB_LO, 0);
+-	j3_gpu_write(mali, J3_MALI_AS0_TRANSTAB_HI, 0);
+-	j3_gpu_write(mali, J3_MALI_AS0_COMMAND, J3_MALI_AS_UPDATE);
+-	(void)j3_gpu_wait_mask(mali, J3_MALI_AS0_STATUS,
+-	    J3_MALI_AS_ACTIVE, 0, 1000000u);
+-	j3_gpu_write(mali, J3_MALI_MMU_IRQ_CLEAR, 0xffffffffu);
+-}
+-
+-/*
+- * Independently encode the public Midgard v4 WRITE_VALUE descriptor.
+- * One aligned wired page is enough for the 64-byte job descriptor.
+- */
+-static bool
+-j3_mali_write_value(vm_offset_t mali, uint64_t targetPA, uint32_t writeType,
+-    const char *tag)
+-{
+-	if (!(j3_gpu_read(mali, J3_MALI_JS0_FEATURES) &
+-	    J3_MALI_JS_FEATURE_WRITE_VALUE)) {
+-		IOLog("J3 GPU: %s STOP JS0 lacks WRITE_VALUE feature js0=%#x\n",
+-		    tag, j3_gpu_read(mali, J3_MALI_JS0_FEATURES));
+-		return false;
+-	}
+-	void *page = IOMallocAligned(4096, 4096);
+-	if (!page) {
+-		IOLog("J3 GPU: %s STOP descriptor allocation failed\n", tag);
+-		return false;
+-	}
+-	bzero(page, 4096);
+-	uint64_t descPA = (uint64_t)ml_vtophys((vm_offset_t)page);
+-	if (!descPA) {
+-		IOLog("J3 GPU: %s STOP descriptor PA unavailable\n", tag);
+-		IOFreeAligned(page, 4096);
+-		return false;
+-	}
+-
+-	volatile uint32_t *w = (volatile uint32_t *)page;
+-	w[4] = 1u | (J3_MALI_JOB_TYPE_WRITE_VALUE << 1) | (1u << 16);
+-	w[8] = (uint32_t)targetPA;
+-	w[9] = (uint32_t)(targetPA >> 32);
+-	w[10] = writeType;
+-	flush_dcache64((addr64_t)(uintptr_t)page, 4096, FALSE);
+-	__asm__ volatile("dsb sy" ::: "memory");
+-
+-	j3_gpu_write(mali, J3_MALI_JOB_IRQ_CLEAR,
+-	    J3_MALI_JOB_DONE0 | J3_MALI_JOB_FAIL0);
+-	j3_gpu_write(mali, J3_MALI_JS_HEAD_NEXT_LO, (uint32_t)descPA);
+-	j3_gpu_write(mali, J3_MALI_JS_HEAD_NEXT_HI, (uint32_t)(descPA >> 32));
+-	uint32_t shader = j3_gpu_read(mali, J3_MALI_SHADER_READY);
+-	j3_gpu_write(mali, J3_MALI_JS_AFFINITY_NEXT_LO, shader ? shader : 1u);
+-	j3_gpu_write(mali, J3_MALI_JS_AFFINITY_NEXT_HI, 0);
+-	j3_gpu_write(mali, J3_MALI_JS_CONFIG_NEXT, J3_MALI_JS_CFG);
+-	IOLog("J3 GPU: %s submitted desc=%#llx target=%#llx type=%u cfg=%#x affinity=%#x\n",
+-	    tag, descPA, targetPA, writeType, J3_MALI_JS_CFG,
+-	    shader ? shader : 1u);
+-	j3_gpu_write(mali, J3_MALI_JS_COMMAND_NEXT, J3_MALI_JS_START);
+-
+-	uint32_t irq = 0;
+-	bool finished = false;
+-	for (unsigned spin = 0; spin < 2000000u; spin++) {
+-		irq = j3_gpu_read(mali, J3_MALI_JOB_IRQ_RAWSTAT);
+-		if (irq & (J3_MALI_JOB_DONE0 | J3_MALI_JOB_FAIL0)) {
+-			finished = true;
+-			break;
+-		}
+-		__asm__ volatile("yield");
+-	}
+-
+-	bool ok = false;
+-	if (!finished) {
+-		IOLog("J3 GPU: %s STOP timeout irq=%#x js=%#x mmu=%#x fault=%#x@%#x:%08x\n",
+-		    tag, irq, j3_gpu_read(mali, J3_MALI_JS_STATUS),
+-		    j3_gpu_read(mali, J3_MALI_MMU_IRQ_STATUS),
+-		    j3_gpu_read(mali, J3_MALI_AS0_FAULTSTATUS),
+-		    j3_gpu_read(mali, J3_MALI_AS0_FAULTADDRESS_HI),
+-		    j3_gpu_read(mali, J3_MALI_AS0_FAULTADDRESS_LO));
+-	} else if (irq & J3_MALI_JOB_FAIL0) {
+-		IOLog("J3 GPU: %s STOP job fault irq=%#x js=%#x mmu=%#x fault=%#x@%#x:%08x\n",
+-		    tag, irq, j3_gpu_read(mali, J3_MALI_JS_STATUS),
+-		    j3_gpu_read(mali, J3_MALI_MMU_IRQ_STATUS),
+-		    j3_gpu_read(mali, J3_MALI_AS0_FAULTSTATUS),
+-		    j3_gpu_read(mali, J3_MALI_AS0_FAULTADDRESS_HI),
+-		    j3_gpu_read(mali, J3_MALI_AS0_FAULTADDRESS_LO));
+-	} else {
+-		IOLog("J3 GPU: %s completed irq=%#x js=%#x\n",
+-		    tag, irq, j3_gpu_read(mali, J3_MALI_JS_STATUS));
+-		ok = true;
+-	}
+-	j3_gpu_write(mali, J3_MALI_JOB_IRQ_CLEAR,
+-	    irq & (J3_MALI_JOB_DONE0 | J3_MALI_JOB_FAIL0));
+-	j3_gpu_write(mali, J3_MALI_MMU_IRQ_CLEAR, 0xffffffffu);
+-	IOFreeAligned(page, 4096);
+-	return ok;
+-}
+-
+-static bool
+-j3_mali_real_job_tests(vm_offset_t mali)
+-{
+-	if (!j3_mali_identity_as0(mali)) {
+-		return false;
+-	}
+-
+-	void *resultPage = IOMallocAligned(4096, 4096);
+-	if (!resultPage) {
+-		IOLog("J3 GPU: real job STOP result allocation failed\n");
+-		j3_mali_as0_unmap(mali);
+-		return false;
+-	}
+-	bzero(resultPage, 4096);
+-	volatile uint64_t *sentinel =
+-	    (volatile uint64_t *)((uintptr_t)resultPage + 0x100);
+-	*sentinel = 0x1122334455667788ULL;
+-	flush_dcache64((addr64_t)(uintptr_t)resultPage, 4096, FALSE);
+-	uint64_t sentinelPA =
+-	    (uint64_t)ml_vtophys((vm_offset_t)(uintptr_t)sentinel);
+-	bool ramJob = sentinelPA &&
+-	    j3_mali_write_value(mali, sentinelPA, J3_MALI_WRITE_ZERO,
+-	    "write-value RAM");
+-	flush_dcache64((addr64_t)(uintptr_t)resultPage, 4096, FALSE);
+-	uint64_t result = *sentinel;
+-	bool ramVerified = ramJob && result == 0;
+-	IOLog("J3 GPU: memory write %s result=%#llx target=%#llx\n",
+-	    ramVerified ? "VERIFIED" : "FAILED", result, sentinelPA);
+-	IOFreeAligned(resultPage, 4096);
+-
+-	if (!ramVerified) {
+-		j3_mali_as0_unmap(mali);
+-		return false;
+-	}
+-
+-	uint64_t fbTarget = J3_MALI_FB_PA +
+-	    (J3_MALI_FB_H - 1) * J3_MALI_FB_STRIDE +
+-	    (J3_MALI_FB_W - 2) * 4;
+-	uint64_t fbPagePA = fbTarget & ~0xfffULL;
+-	uint32_t fbOff = (uint32_t)(fbTarget & 0xfffULL);
+-	vm_offset_t fbMap = ml_io_map((vm_offset_t)fbPagePA, 0x1000);
+-	bool fbVerified = false;
+-	if (!fbMap || fbOff > 0xff8u) {
+-		IOLog("J3 GPU: framebuffer GPU write SKIP map=%#lx off=%#x\n",
+-		    (unsigned long)fbMap, fbOff);
+-	} else {
+-		volatile uint64_t *fbPair = (volatile uint64_t *)(fbMap + fbOff);
+-		uint64_t old = *fbPair;
+-		bool fbJob = j3_mali_write_value(mali, fbTarget,
+-		    J3_MALI_WRITE_TIMESTAMP, "write-value FB");
+-		__asm__ volatile("dsb sy" ::: "memory");
+-		uint64_t gpu = *fbPair;
+-		fbVerified = fbJob && gpu != old;
+-		*fbPair = old;
+-		__asm__ volatile("dsb sy" ::: "memory");
+-		IOLog("J3 GPU: framebuffer GPU write %s old=%#llx gpu=%#llx target=%#llx restored=yes\n",
+-		    fbVerified ? "PASS" : "FAILED", old, gpu, fbTarget);
+-	}
+-	j3_mali_as0_unmap(mali);
+-	IOLog("J3 GPU: real-job summary RAM=%s FB=%s; CPU present remains active\n",
+-	    ramVerified ? "PASS" : "FAIL", fbVerified ? "PASS" : "FAIL");
+-	return ramVerified && fbVerified;
++/* J3XNU094: real legacy Mali-LPAE tables + fault-aware retry. */
++#define J3_MALI_MMU_IRQ_RAWSTAT          0x2000u
++#define J3_MALI_JS_COMMAND               (J3_MALI_JS0_BASE + 0x20u)
++#define J3_MALI_JS_HARD_STOP             0x03u
++#define J3_MALI_JS_ACTIVE                0x08u
++#define J3_MALI_AS_UNLOCK                0x03u
++#define J3_MALI_MMU_PAGE_FAULT0          (1u << 0)
++#define J3_MALI_MMU_BUS_ERROR0           (1u << 16)
++#define J3_MALI_MMU_FAULT0_MASK          (J3_MALI_MMU_PAGE_FAULT0 | J3_MALI_MMU_BUS_ERROR0)
++
++#define J3_MALI_PT_PAGE_SIZE             4096u
++#define J3_MALI_PT_MAX_PAGES             12u
++#define J3_MALI_PTE_TABLE                3ULL
++#define J3_MALI_ATE                      1ULL
++#define J3_MALI_ATE_RD                   (1ULL << 6)
++#define J3_MALI_ATE_WR                   (1ULL << 7)
++#define J3_MALI_ATE_ACCESS               (1ULL << 10)
++#define J3_MALI_ATE_NX                   (1ULL << 54)
++#define J3_MALI_TRANSTAB_TABLE           3ULL
++#define J3_MALI_TRANSTAB_READ_INNER      (1ULL << 2)
++
++#define J3_MALI_MEMATTR_SAMSUNG          0x0000008d884d4f48ULL
++#define J3_MALI_MEMATTR_PANFROST         0x0000000000888d88ULL
++
++struct j3_mali_pt_ctx {
++	void *pages[J3_MALI_PT_MAX_PAGES];
++	uint64_t pa[J3_MALI_PT_MAX_PAGES];
++	unsigned count;
++};
++
++static uint32_t
++j3_gpu_read(vm_offset_t base, uint32_t offset)
++{
++	return *(volatile uint32_t *)(base + offset);
++}
++
++static void
++j3_gpu_write(vm_offset_t base, uint32_t offset, uint32_t value)
++{
++	*(volatile uint32_t *)(base + offset) = value;
++	__asm__ volatile("dsb sy" ::: "memory");
++}
++
++static void
++j3_gpu_rmw(vm_offset_t base, uint32_t offset, uint32_t mask, uint32_t value)
++{
++	uint32_t old = j3_gpu_read(base, offset);
++	j3_gpu_write(base, offset, (old & ~mask) | (value & mask));
++}
++
++static bool
++j3_gpu_wait_mask(vm_offset_t base, uint32_t offset, uint32_t mask,
++    uint32_t want, unsigned spins)
++{
++	for (unsigned n = 0; n < spins; n++) {
++		if ((j3_gpu_read(base, offset) & mask) == want) {
++			return true;
++		}
++		__asm__ volatile("yield");
++	}
++	return false;
++}
++
++static uint64_t
++j3_gpu_read64(vm_offset_t base, uint32_t lo, uint32_t hi)
++{
++	uint32_t h1, h2, l;
++	do {
++		h1 = j3_gpu_read(base, hi);
++		l = j3_gpu_read(base, lo);
++		h2 = j3_gpu_read(base, hi);
++	} while (h1 != h2);
++	return ((uint64_t)h2 << 32) | l;
++}
++
++/*
++ * Allocate and populate the same four-level Mali-LPAE table format used by
++ * the public T720 driver.  GPU VA == PA for this tiny validation aperture,
++ * but translation happens through real page tables rather than identity mode.
++ */
++static void *
++j3_mali_pt_alloc(struct j3_mali_pt_ctx *ctx)
++{
++	if (ctx->count >= J3_MALI_PT_MAX_PAGES) {
++		return NULL;
++	}
++	void *page = IOMallocAligned(J3_MALI_PT_PAGE_SIZE,
++	    J3_MALI_PT_PAGE_SIZE);
++	if (!page) {
++		return NULL;
++	}
++	bzero(page, J3_MALI_PT_PAGE_SIZE);
++	uint64_t pa = (uint64_t)ml_vtophys((vm_offset_t)page);
++	if (!pa) {
++		IOFreeAligned(page, J3_MALI_PT_PAGE_SIZE);
++		return NULL;
++	}
++	ctx->pages[ctx->count] = page;
++	ctx->pa[ctx->count] = pa;
++	ctx->count++;
++	return page;
++}
++
++static void *
++j3_mali_pt_find(struct j3_mali_pt_ctx *ctx, uint64_t pa)
++{
++	pa &= ~0xfffULL;
++	for (unsigned n = 0; n < ctx->count; n++) {
++		if ((ctx->pa[n] & ~0xfffULL) == pa) {
++			return ctx->pages[n];
++		}
++	}
++	return NULL;
++}
++
++static bool
++j3_mali_pt_map_page(struct j3_mali_pt_ctx *ctx, uint64_t va, uint64_t pa,
++    unsigned attrIndex)
++{
++	if (!ctx->count) {
++		if (!j3_mali_pt_alloc(ctx)) {
++			return false;
++		}
++	}
++	uint64_t *table = (uint64_t *)ctx->pages[0];
++	const unsigned shifts[3] = { 39, 30, 21 };
++	for (unsigned level = 0; level < 3; level++) {
++		unsigned idx = (unsigned)((va >> shifts[level]) & 0x1ffULL);
++		uint64_t entry = table[idx];
++		if ((entry & 3ULL) != J3_MALI_PTE_TABLE) {
++			void *nextPage = j3_mali_pt_alloc(ctx);
++			if (!nextPage) {
++				return false;
++			}
++			uint64_t nextPA = ctx->pa[ctx->count - 1] & ~0xfffULL;
++			table[idx] = nextPA | J3_MALI_PTE_TABLE;
++			table = (uint64_t *)nextPage;
++		} else {
++			void *nextPage = j3_mali_pt_find(ctx, entry);
++			if (!nextPage) {
++				return false;
++			}
++			table = (uint64_t *)nextPage;
++		}
++	}
++	unsigned leaf = (unsigned)((va >> 12) & 0x1ffULL);
++	uint64_t flags = J3_MALI_ATE |
++	    (((uint64_t)attrIndex & 7ULL) << 2) |
++	    J3_MALI_ATE_RD | J3_MALI_ATE_WR |
++	    J3_MALI_ATE_ACCESS | J3_MALI_ATE_NX;
++	table[leaf] = (pa & ~0xfffULL) | flags;
++	return true;
++}
++
++static void
++j3_mali_pt_flush(struct j3_mali_pt_ctx *ctx)
++{
++	for (unsigned n = 0; n < ctx->count; n++) {
++		flush_dcache64((addr64_t)(uintptr_t)ctx->pages[n],
++		    J3_MALI_PT_PAGE_SIZE, FALSE);
++	}
++	__asm__ volatile("dsb sy" ::: "memory");
++}
++
++static void
++j3_mali_pt_free(struct j3_mali_pt_ctx *ctx)
++{
++	for (unsigned n = 0; n < ctx->count; n++) {
++		if (ctx->pages[n]) {
++			IOFreeAligned(ctx->pages[n], J3_MALI_PT_PAGE_SIZE);
++		}
++	}
++	bzero(ctx, sizeof(*ctx));
++}
++
++static bool
++j3_mali_table_as0(vm_offset_t mali, struct j3_mali_pt_ctx *ctx,
++    uint64_t memattr, const char *variant)
++{
++	if (!ctx->count || !ctx->pa[0]) {
++		return false;
++	}
++	if (!j3_gpu_wait_mask(mali, J3_MALI_AS0_STATUS,
++	    J3_MALI_AS_ACTIVE, 0, 1000000u)) {
++		IOLog("J3 GPU: MMU table %s STOP AS0 busy status=%#x\n",
++		    variant, j3_gpu_read(mali, J3_MALI_AS0_STATUS));
++		return false;
++	}
++
++	j3_gpu_write(mali, J3_MALI_MMU_IRQ_CLEAR, 0xffffffffu);
++	uint64_t transtab = (ctx->pa[0] & ~0xfffULL) |
++	    J3_MALI_TRANSTAB_TABLE | J3_MALI_TRANSTAB_READ_INNER;
++	j3_gpu_write(mali, J3_MALI_AS0_TRANSTAB_LO, (uint32_t)transtab);
++	j3_gpu_write(mali, J3_MALI_AS0_TRANSTAB_HI, (uint32_t)(transtab >> 32));
++	j3_gpu_write(mali, J3_MALI_AS0_MEMATTR_LO, (uint32_t)memattr);
++	j3_gpu_write(mali, J3_MALI_AS0_MEMATTR_HI, (uint32_t)(memattr >> 32));
++	j3_gpu_write(mali, J3_MALI_AS0_COMMAND, J3_MALI_AS_UPDATE);
++
++	if (!j3_gpu_wait_mask(mali, J3_MALI_AS0_STATUS,
++	    J3_MALI_AS_ACTIVE, 0, 1000000u)) {
++		IOLog("J3 GPU: MMU table %s STOP UPDATE timeout status=%#x\n",
++		    variant, j3_gpu_read(mali, J3_MALI_AS0_STATUS));
++		return false;
++	}
++	IOLog("J3 GPU: MMU table %s PASS root=%#llx transtab=%#x:%08x memattr=%#llx pages=%u\n",
++	    variant, ctx->pa[0],
++	    j3_gpu_read(mali, J3_MALI_AS0_TRANSTAB_HI),
++	    j3_gpu_read(mali, J3_MALI_AS0_TRANSTAB_LO),
++	    memattr, ctx->count);
++	return true;
++}
++
++static void
++j3_mali_as0_unmap(vm_offset_t mali)
++{
++	if (j3_gpu_wait_mask(mali, J3_MALI_AS0_STATUS,
++	    J3_MALI_AS_ACTIVE, 0, 100000u)) {
++		j3_gpu_write(mali, J3_MALI_AS0_TRANSTAB_LO, 0);
++		j3_gpu_write(mali, J3_MALI_AS0_TRANSTAB_HI, 0);
++		j3_gpu_write(mali, J3_MALI_AS0_COMMAND, J3_MALI_AS_UPDATE);
++		(void)j3_gpu_wait_mask(mali, J3_MALI_AS0_STATUS,
++		    J3_MALI_AS_ACTIVE, 0, 100000u);
++	}
++	j3_gpu_write(mali, J3_MALI_MMU_IRQ_CLEAR, 0xffffffffu);
++}
++
++static bool
++j3_mali_recover_fault(vm_offset_t mali, const char *tag)
++{
++	uint32_t js = j3_gpu_read(mali, J3_MALI_JS_STATUS);
++	if (js == J3_MALI_JS_ACTIVE) {
++		j3_gpu_write(mali, J3_MALI_JS_COMMAND, J3_MALI_JS_HARD_STOP);
++		for (unsigned n = 0; n < 500000u; n++) {
++			if (j3_gpu_read(mali, J3_MALI_JS_STATUS) !=
++			    J3_MALI_JS_ACTIVE) {
++				break;
++			}
++			__asm__ volatile("yield");
++		}
++	}
++	uint32_t after = j3_gpu_read(mali, J3_MALI_JS_STATUS);
++	uint32_t jobRaw = j3_gpu_read(mali, J3_MALI_JOB_IRQ_RAWSTAT);
++	uint32_t mmuRaw = j3_gpu_read(mali, J3_MALI_MMU_IRQ_RAWSTAT);
++	j3_gpu_write(mali, J3_MALI_JOB_IRQ_CLEAR, 0xffffffffu);
++	j3_gpu_write(mali, J3_MALI_MMU_IRQ_CLEAR, 0xffffffffu);
++	if (j3_gpu_wait_mask(mali, J3_MALI_AS0_STATUS,
++	    J3_MALI_AS_ACTIVE, 0, 100000u)) {
++		j3_gpu_write(mali, J3_MALI_AS0_COMMAND, J3_MALI_AS_UNLOCK);
++		(void)j3_gpu_wait_mask(mali, J3_MALI_AS0_STATUS,
++		    J3_MALI_AS_ACTIVE, 0, 100000u);
++	}
++	IOLog("J3 GPU: %s recovery js=%#x->%#x jobraw=%#x mmuraw=%#x\n",
++	    tag, js, after, jobRaw, mmuRaw);
++	return after != J3_MALI_JS_ACTIVE;
++}
++
++static bool
++j3_mali_write_value(vm_offset_t mali, void *descPage, uint64_t descPA,
++    uint64_t targetVA, uint32_t writeType, const char *tag, bool *mmuFault)
++{
++	*mmuFault = false;
++	if (!(j3_gpu_read(mali, J3_MALI_JS0_FEATURES) &
++	    J3_MALI_JS_FEATURE_WRITE_VALUE)) {
++		IOLog("J3 GPU: %s STOP JS0 lacks WRITE_VALUE feature js0=%#x\n",
++		    tag, j3_gpu_read(mali, J3_MALI_JS0_FEATURES));
++		return false;
++	}
++
++	bzero(descPage, J3_MALI_PT_PAGE_SIZE);
++	volatile uint32_t *w = (volatile uint32_t *)descPage;
++	w[4] = 1u | (J3_MALI_JOB_TYPE_WRITE_VALUE << 1) | (1u << 16);
++	w[8] = (uint32_t)targetVA;
++	w[9] = (uint32_t)(targetVA >> 32);
++	w[10] = writeType;
++	flush_dcache64((addr64_t)(uintptr_t)descPage,
++	    J3_MALI_PT_PAGE_SIZE, FALSE);
++	__asm__ volatile("dsb sy" ::: "memory");
++
++	j3_gpu_write(mali, J3_MALI_JOB_IRQ_CLEAR, 0xffffffffu);
++	j3_gpu_write(mali, J3_MALI_MMU_IRQ_CLEAR, 0xffffffffu);
++	j3_gpu_write(mali, J3_MALI_JS_HEAD_NEXT_LO, (uint32_t)descPA);
++	j3_gpu_write(mali, J3_MALI_JS_HEAD_NEXT_HI, (uint32_t)(descPA >> 32));
++	uint32_t shader = j3_gpu_read(mali, J3_MALI_SHADER_READY);
++	j3_gpu_write(mali, J3_MALI_JS_AFFINITY_NEXT_LO, shader ? shader : 1u);
++	j3_gpu_write(mali, J3_MALI_JS_AFFINITY_NEXT_HI, 0);
++	j3_gpu_write(mali, J3_MALI_JS_CONFIG_NEXT, J3_MALI_JS_CFG);
++	IOLog("J3 GPU: %s submitted desc=%#llx target=%#llx type=%u cfg=%#x affinity=%#x\n",
++	    tag, descPA, targetVA, writeType, J3_MALI_JS_CFG,
++	    shader ? shader : 1u);
++	j3_gpu_write(mali, J3_MALI_JS_COMMAND_NEXT, J3_MALI_JS_START);
++
++	uint32_t jobRaw = 0;
++	uint32_t mmuRaw = 0;
++	bool finished = false;
++	for (unsigned spin = 0; spin < 2000000u; spin++) {
++		jobRaw = j3_gpu_read(mali, J3_MALI_JOB_IRQ_RAWSTAT);
++		mmuRaw = j3_gpu_read(mali, J3_MALI_MMU_IRQ_RAWSTAT);
++		if (mmuRaw & J3_MALI_MMU_FAULT0_MASK) {
++			*mmuFault = true;
++			finished = true;
++			break;
++		}
++		if (jobRaw & (J3_MALI_JOB_DONE0 | J3_MALI_JOB_FAIL0)) {
++			finished = true;
++			break;
++		}
++		__asm__ volatile("yield");
++	}
++
++	bool ok = false;
++	if (*mmuFault) {
++		uint32_t fs = j3_gpu_read(mali, J3_MALI_AS0_FAULTSTATUS);
++		IOLog("J3 GPU: %s MMU FAULT raw=%#x status=%#x addr=%#x:%08x js=%#x exception=%#x access=%#x\n",
++		    tag, mmuRaw, fs,
++		    j3_gpu_read(mali, J3_MALI_AS0_FAULTADDRESS_HI),
++		    j3_gpu_read(mali, J3_MALI_AS0_FAULTADDRESS_LO),
++		    j3_gpu_read(mali, J3_MALI_JS_STATUS),
++		    fs & 0x38u, fs & 0x300u);
++	} else if (!finished) {
++		IOLog("J3 GPU: %s STOP timeout jobraw=%#x mmuraw=%#x js=%#x fault=%#x@%#x:%08x\n",
++		    tag, jobRaw, mmuRaw, j3_gpu_read(mali, J3_MALI_JS_STATUS),
++		    j3_gpu_read(mali, J3_MALI_AS0_FAULTSTATUS),
++		    j3_gpu_read(mali, J3_MALI_AS0_FAULTADDRESS_HI),
++		    j3_gpu_read(mali, J3_MALI_AS0_FAULTADDRESS_LO));
++	} else if (jobRaw & J3_MALI_JOB_FAIL0) {
++		IOLog("J3 GPU: %s STOP job fault jobraw=%#x js=%#x mmuraw=%#x fault=%#x@%#x:%08x\n",
++		    tag, jobRaw, j3_gpu_read(mali, J3_MALI_JS_STATUS), mmuRaw,
++		    j3_gpu_read(mali, J3_MALI_AS0_FAULTSTATUS),
++		    j3_gpu_read(mali, J3_MALI_AS0_FAULTADDRESS_HI),
++		    j3_gpu_read(mali, J3_MALI_AS0_FAULTADDRESS_LO));
++	} else {
++		IOLog("J3 GPU: %s completed jobraw=%#x js=%#x\n",
++		    tag, jobRaw, j3_gpu_read(mali, J3_MALI_JS_STATUS));
++		ok = true;
++	}
++	if (!ok) {
++		(void)j3_mali_recover_fault(mali, tag);
++	}
++	j3_gpu_write(mali, J3_MALI_JOB_IRQ_CLEAR, 0xffffffffu);
++	j3_gpu_write(mali, J3_MALI_MMU_IRQ_CLEAR, 0xffffffffu);
++	return ok;
++}
++
++static bool
++j3_mali_run_variant(vm_offset_t mali, void *descPage, uint64_t descPA,
++    void *resultPage, uint64_t sentinelPA, uint64_t fbTarget,
++    uint64_t memattr, const char *variant, bool *sawMmuFault)
++{
++	struct j3_mali_pt_ctx pt;
++	bzero(&pt, sizeof(pt));
++	*sawMmuFault = false;
++
++	if (!j3_mali_pt_map_page(&pt, descPA, descPA, 0) ||
++	    !j3_mali_pt_map_page(&pt, sentinelPA, sentinelPA, 0) ||
++	    !j3_mali_pt_map_page(&pt, fbTarget, fbTarget, 0)) {
++		IOLog("J3 GPU: variant %s STOP page-table allocation/map failed pages=%u\n",
++		    variant, pt.count);
++		j3_mali_pt_free(&pt);
++		return false;
++	}
++	j3_mali_pt_flush(&pt);
++	if (!j3_mali_table_as0(mali, &pt, memattr, variant)) {
++		j3_mali_pt_free(&pt);
++		return false;
++	}
++
++	volatile uint64_t *sentinel =
++	    (volatile uint64_t *)((uintptr_t)resultPage + 0x100);
++	*sentinel = 0x1122334455667788ULL;
++	flush_dcache64((addr64_t)(uintptr_t)resultPage,
++	    J3_MALI_PT_PAGE_SIZE, FALSE);
++
++	bool mmuFault = false;
++	bool ramJob = j3_mali_write_value(mali, descPage, descPA, sentinelPA,
++	    J3_MALI_WRITE_ZERO, "write-value RAM", &mmuFault);
++	*sawMmuFault |= mmuFault;
++	flush_dcache64((addr64_t)(uintptr_t)resultPage,
++	    J3_MALI_PT_PAGE_SIZE, FALSE);
++	uint64_t result = *sentinel;
++	bool ramVerified = ramJob && result == 0;
++	IOLog("J3 GPU: variant %s memory write %s result=%#llx target=%#llx\n",
++	    variant, ramVerified ? "VERIFIED" : "FAILED", result, sentinelPA);
++
++	if (!ramVerified) {
++		j3_mali_as0_unmap(mali);
++		j3_mali_pt_free(&pt);
++		return false;
++	}
++
++	uint64_t fbPagePA = fbTarget & ~0xfffULL;
++	uint32_t fbOff = (uint32_t)(fbTarget & 0xfffULL);
++	vm_offset_t fbMap = ml_io_map((vm_offset_t)fbPagePA, 0x1000);
++	bool fbVerified = false;
++	if (!fbMap || fbOff > 0xff8u) {
++		IOLog("J3 GPU: variant %s framebuffer write SKIP map=%#lx off=%#x\n",
++		    variant, (unsigned long)fbMap, fbOff);
++	} else {
++		volatile uint64_t *fbPair = (volatile uint64_t *)(fbMap + fbOff);
++		uint64_t old = *fbPair;
++		mmuFault = false;
++		bool fbJob = j3_mali_write_value(mali, descPage, descPA, fbTarget,
++		    J3_MALI_WRITE_TIMESTAMP, "write-value FB", &mmuFault);
++		*sawMmuFault |= mmuFault;
++		__asm__ volatile("dsb sy" ::: "memory");
++		uint64_t gpu = *fbPair;
++		fbVerified = fbJob && gpu != old;
++		*fbPair = old;
++		__asm__ volatile("dsb sy" ::: "memory");
++		IOLog("J3 GPU: variant %s framebuffer GPU write %s old=%#llx gpu=%#llx target=%#llx restored=yes\n",
++		    variant, fbVerified ? "PASS" : "FAILED", old, gpu, fbTarget);
++	}
++
++	j3_mali_as0_unmap(mali);
++	j3_mali_pt_free(&pt);
++	IOLog("J3 GPU: variant %s summary RAM=%s FB=%s mmufault=%s\n",
++	    variant, ramVerified ? "PASS" : "FAIL",
++	    fbVerified ? "PASS" : "FAIL",
++	    *sawMmuFault ? "yes" : "no");
++	return ramVerified && fbVerified;
++}
++
++static bool
++j3_mali_real_job_tests(vm_offset_t mali)
++{
++	void *descPage = IOMallocAligned(J3_MALI_PT_PAGE_SIZE,
++	    J3_MALI_PT_PAGE_SIZE);
++	void *resultPage = IOMallocAligned(J3_MALI_PT_PAGE_SIZE,
++	    J3_MALI_PT_PAGE_SIZE);
++	if (!descPage || !resultPage) {
++		IOLog("J3 GPU: real job STOP work-page allocation failed desc=%p result=%p\n",
++		    descPage, resultPage);
++		if (descPage) {
++			IOFreeAligned(descPage, J3_MALI_PT_PAGE_SIZE);
++		}
++		if (resultPage) {
++			IOFreeAligned(resultPage, J3_MALI_PT_PAGE_SIZE);
++		}
++		return false;
++	}
++	bzero(descPage, J3_MALI_PT_PAGE_SIZE);
++	bzero(resultPage, J3_MALI_PT_PAGE_SIZE);
++	uint64_t descPA = (uint64_t)ml_vtophys((vm_offset_t)descPage);
++	volatile uint64_t *sentinel =
++	    (volatile uint64_t *)((uintptr_t)resultPage + 0x100);
++	uint64_t sentinelPA =
++	    (uint64_t)ml_vtophys((vm_offset_t)(uintptr_t)sentinel);
++	uint64_t fbTarget = J3_MALI_FB_PA +
++	    (J3_MALI_FB_H - 1) * J3_MALI_FB_STRIDE +
++	    (J3_MALI_FB_W - 2) * 4;
++
++	if (!descPA || !sentinelPA) {
++		IOLog("J3 GPU: real job STOP PA lookup failed desc=%#llx target=%#llx\n",
++		    descPA, sentinelPA);
++		IOFreeAligned(descPage, J3_MALI_PT_PAGE_SIZE);
++		IOFreeAligned(resultPage, J3_MALI_PT_PAGE_SIZE);
++		return false;
++	}
++
++	bool faultA = false;
++	bool pass = j3_mali_run_variant(mali, descPage, descPA,
++	    resultPage, sentinelPA, fbTarget, J3_MALI_MEMATTR_SAMSUNG,
++	    "A-samsung", &faultA);
++
++	if (!pass) {
++		IOLog("J3 GPU: variant A failed (mmufault=%s); retrying B-panfrost in same boot\n",
++		    faultA ? "yes" : "no");
++		(void)j3_mali_recover_fault(mali, "variant-A");
++		j3_mali_as0_unmap(mali);
++		bool faultB = false;
++		pass = j3_mali_run_variant(mali, descPage, descPA,
++		    resultPage, sentinelPA, fbTarget, J3_MALI_MEMATTR_PANFROST,
++		    "B-panfrost", &faultB);
++	}
++
++	IOFreeAligned(descPage, J3_MALI_PT_PAGE_SIZE);
++	IOFreeAligned(resultPage, J3_MALI_PT_PAGE_SIZE);
++	IOLog("J3 GPU: real-job page-table ladder %s; CPU present remains active\n",
++	    pass ? "PASS" : "FAILED");
++	return pass;
+ }
+ 
+ /*
