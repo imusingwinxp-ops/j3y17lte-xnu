@@ -112,7 +112,7 @@ int main(int argc, char **argv)
    fprintf(meta, "LOCAL_SIZE=64,1,1\n");
    fprintf(meta, "FRAME_WORDS=921600\n");
    fprintf(meta, "WORKGROUPS=14400,1,1\n");
-   fprintf(meta, "BINARY_SIZE=%zu\n", binary.size);
+   fprintf(meta, "BINARY_SIZE=%u\n", binary.size);
    fprintf(meta, "FIRST_TAG=%u\n", info.midgard.first_tag);
    fprintf(meta, "WORK_REG_COUNT=%u\n", info.work_reg_count);
    fprintf(meta, "TLS_SIZE=%u\n", info.tls_size);
