@@ -1,0 +1,47 @@
+--- a/iokit/Kernel/arm/SweetFramebuffer.cpp
++++ b/iokit/Kernel/arm/SweetFramebuffer.cpp
+@@ -235,8 +235,9 @@
+ #define J3_MALI_AS_READ_INNER           0x04u
+ #define J3_MALI_PT_INVALID              0x02ULL
+ #define J3_MALI_PT_PTE                  0x03ULL
+-#define J3_MALI_PT_ATE_L3               0x03ULL
+-#define J3_MALI_PT_ACCESS_RW            (1ULL << 6)
+-#define J3_MALI_PT_ACCESS_FLAG          (1ULL << 10)
++#define J3_MALI_PT_LEAF_BLOCK           0x01ULL
++#define J3_MALI_PT_READ                 (1ULL << 6)
++#define J3_MALI_PT_WRITE                (1ULL << 7)
++#define J3_MALI_PT_SHARE_OUTER          (2ULL << 8)
+ #define J3_MALI_PT_MAX_PAGES            8u
+-#define J3_MALI_MEMATTR_R28             0x0000008d884d4f48ULL
++#define J3_MALI_MEMATTR_R28             0x0000000000888d88ULL
+ 
+@@ -364,10 +365,15 @@
+ 	volatile uint64_t *leaf =
+ 	    (volatile uint64_t *)pt->page[table].va;
+ 	unsigned slot = (unsigned)((gpuVA >> 12) & 0x1ffULL);
+-	leaf[slot] = physical |
++	uint64_t leafValue = physical |
+ 	    (((uint64_t)memattrIndex & 7ULL) << 2) |
+-	    J3_MALI_PT_ACCESS_RW | J3_MALI_PT_ACCESS_FLAG |
+-	    J3_MALI_PT_ATE_L3;
++	    J3_MALI_PT_READ | J3_MALI_PT_WRITE |
++	    J3_MALI_PT_SHARE_OUTER | J3_MALI_PT_LEAF_BLOCK;
++	leaf[slot] = leafValue;
++	if (!j3_mali_live_ready) {
++		IOLog("J3 GPU: Mali-LPAE leaf va=%#llx pa=%#llx value=%#llx attr=%u\n",
++		    gpuVA, physical, leafValue, memattrIndex);
++	}
+ 	return true;
+ }
+ 
+@@ -584,7 +590,10 @@
+ 		return false;
+ 	}
+ 
+-	unsigned chosenAttr = 2;
++	unsigned chosenAttr = 1;
++	IOLog("J3 GPU: Mali-LPAE upstream profile memattr=%#llx primaryAttr=%u\n",
++	    J3_MALI_MEMATTR_R28, chosenAttr);
+ 	*sentinel = 0x1122334455667788ULL;
+ 	flush_dcache64((addr64_t)(uintptr_t)resultPage, 4096, FALSE);
+ 	bool mmuFault = false;
