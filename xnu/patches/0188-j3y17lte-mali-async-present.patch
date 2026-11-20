@@ -24,15 +24,13 @@
  #define J3_MALI_COPY_SHADER_OFF          0x000u
  #define J3_MALI_COPY_RSD_OFF             0x100u
  #define J3_MALI_COPY_TLS_OFF             0x140u
-@@ -365,10 +365,18 @@
- 	struct j3_mali_pt pt;
- 	void *resourcePage;
- 	uint64_t resourcePA;
+@@ -368,2 +368,3 @@
 -	IOMemoryDescriptor *sourceMemory;
 -	uint32_t sourceOffset;
 +	IOMemoryDescriptor *sourceMemory[J3_MALI_SOURCE_SLOTS];
 +	uint32_t sourceOffset[J3_MALI_SOURCE_SLOTS];
 +	unsigned nextSourceSlot;
+@@ -372,2 +373,8 @@
  	bool initialized;
  	bool disabled;
 +	bool inFlight;
@@ -41,8 +39,7 @@
 +	uint64_t busyFrames;
 +	uint64_t sourceHits;
 +	uint64_t sourceRemaps;
- };
- 
+@@ -376,1 +383,2 @@
  static struct j3_mali_compute_ctx j3_mali_compute;
 +static uint64_t j3_mali_cpu_fallbacks;
 @@ -840,5 +840,7 @@
