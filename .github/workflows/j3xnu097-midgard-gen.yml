@@ -61,7 +61,7 @@ jobs:
         working-directory: mesa
         run: |
           meson setup build \
-            -Dgallium-drivers=panfrost \
+            -Dgallium-drivers=softpipe \
             -Dvulkan-drivers= \
             -Dtools=panfrost \
             -Dplatforms= \
