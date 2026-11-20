@@ -1,6 +1,6 @@
 --- a/iokit/Kernel/arm/SweetFramebuffer.cpp
 +++ b/iokit/Kernel/arm/SweetFramebuffer.cpp
-@@ -244,10 +244,54 @@
+@@ -244,10 +244,42 @@
  static vm_offset_t j3_mali_live_base;
  static bool j3_mali_live_ready;
  static unsigned j3_mali_live_attr;
@@ -34,18 +34,6 @@
 +#define J3_MALI_COPY_UBO_DATA_OFF        0x190u
 +#define J3_MALI_COPY_JOB_OFF             0x200u
 +
-+struct j3_mali_compute_ctx {
-+	struct j3_mali_pt pt;
-+	void *resourcePage;
-+	uint64_t resourcePA;
-+	IOMemoryDescriptor *sourceMemory;
-+	uint32_t sourceOffset;
-+	bool initialized;
-+	bool disabled;
-+};
-+
-+static struct j3_mali_compute_ctx j3_mali_compute;
-+
 +static const uint8_t j3_mali_copy_shader[112] = {
 +	0x85,0xa8,0x20,0xc8,0x01,0x38,0x00,0x01,0x00,0x01,0x04,0x12,0x03,0x00,0x00,0x00,
 +	0x88,0x00,0x80,0x08,0x00,0x7c,0xa2,0x14,0x01,0xd8,0x0a,0x08,0x00,0x00,0x55,0x55,
@@ -58,6 +46,26 @@
  
  static uint32_t
  j3_gpu_read(vm_offset_t base, uint32_t offset)
+@@ -315,7 +359,19 @@
+ struct j3_mali_pt {
+ 	struct j3_mali_pt_page page[J3_MALI_PT_MAX_PAGES];
+ 	unsigned count;
+ };
++
++struct j3_mali_compute_ctx {
++	struct j3_mali_pt pt;
++	void *resourcePage;
++	uint64_t resourcePA;
++	IOMemoryDescriptor *sourceMemory;
++	uint32_t sourceOffset;
++	bool initialized;
++	bool disabled;
++};
++
++static struct j3_mali_compute_ctx j3_mali_compute;
+ 
+ static int
+ j3_mali_pt_alloc(struct j3_mali_pt *pt)
 @@ -369,9 +413,12 @@
  	leaf[slot] = physical |
  	    (((uint64_t)memattrIndex & 7ULL) << 2) |
