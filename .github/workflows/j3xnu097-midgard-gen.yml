@@ -1,0 +1,121 @@
+name: J3XNU097 Midgard T720 shader generator
+
+on:
+  push:
+    branches:
+      - j3xnu097-mali-compute-present
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  generate-t720-copy-kernel:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout J3 source
+        uses: actions/checkout@v4
+
+      - name: Install Mesa build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential meson ninja-build pkg-config \
+            python3-mako python3-yaml python3-ply python3-packaging \
+            bison flex libdrm-dev libexpat1-dev libzstd-dev
+
+      - name: Fetch pinned Mesa
+        run: |
+          git clone https://github.com/mesa3d/mesa.git mesa
+          git -C mesa fetch origin e24dc5bd1e7fe6101bdc866fb16a15a8fcae1aae
+          git -C mesa checkout --detach e24dc5bd1e7fe6101bdc866fb16a15a8fcae1aae
+          test "$(git -C mesa rev-parse HEAD)" = "e24dc5bd1e7fe6101bdc866fb16a15a8fcae1aae"
+
+      - name: Inject J3 T720 host generator
+        run: |
+          cp tools/j3y17lte/j3_midgard_copy_gen.c \
+            mesa/src/panfrost/compiler/j3_midgard_copy_gen.c
+
+          cat >> mesa/src/panfrost/meson.build <<'MESON'
+
+          j3_midgard_copy_gen = executable(
+            'j3_midgard_copy_gen',
+            files('compiler/j3_midgard_copy_gen.c'),
+            include_directories : [
+              inc_include,
+              inc_src,
+              inc_panfrost,
+            ],
+            dependencies : [
+              idep_nir,
+              idep_mesautil,
+              idep_bi_opcodes_h,
+              dep_libdrm,
+            ],
+            link_with : [
+              libpanfrost_compiler,
+            ],
+            c_args : [
+              no_override_init_args,
+              soong_compat_c_args,
+            ],
+            build_by_default : true,
+          )
+          MESON
+
+      - name: Configure Mesa compiler-only build
+        working-directory: mesa
+        run: |
+          meson setup build \
+            -Dgallium-drivers= \
+            -Dvulkan-drivers= \
+            -Dtools=panfrost \
+            -Dplatforms= \
+            -Dglx=disabled \
+            -Degl=disabled \
+            -Dgbm=disabled \
+            -Dllvm=disabled \
+            -Dbuild-tests=false \
+            -Dvideo-codecs=
+
+      - name: Build and run T720 generator
+        run: |
+          ninja -C mesa/build src/panfrost/j3_midgard_copy_gen
+
+          mkdir -p generated/j3xnu097
+          mesa/build/src/panfrost/j3_midgard_copy_gen \
+            generated/j3xnu097/j3_t720_present_copy.bin \
+            generated/j3xnu097/j3_t720_present_copy.txt
+
+          sha256sum generated/j3xnu097/j3_t720_present_copy.bin \
+            > generated/j3xnu097/SHA256SUMS
+
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path("generated/j3xnu097/j3_t720_present_copy.bin")
+          b = p.read_bytes()
+          lines = [
+              "#ifndef J3_T720_PRESENT_COPY_H",
+              "#define J3_T720_PRESENT_COPY_H",
+              "#include <stdint.h>",
+              f"#define J3_T720_PRESENT_COPY_SIZE {len(b)}u",
+              "static const uint8_t j3_t720_present_copy[] = {",
+          ]
+          for i in range(0, len(b), 12):
+              chunk = b[i:i+12]
+              lines.append("    " + ", ".join(f"0x{x:02x}" for x in chunk) + ",")
+          lines += ["};", "#endif", ""]
+          Path("generated/j3xnu097/j3_t720_present_copy.h").write_text("\n".join(lines))
+          PY
+
+          echo "===== META ====="
+          cat generated/j3xnu097/j3_t720_present_copy.txt
+          echo "===== SHA256 ====="
+          cat generated/j3xnu097/SHA256SUMS
+
+      - name: Upload generated Midgard artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: j3xnu097-t720-midgard-copy
+          path: generated/j3xnu097/
+          if-no-files-found: error
