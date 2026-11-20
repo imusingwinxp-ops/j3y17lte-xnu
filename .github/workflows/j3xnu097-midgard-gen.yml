@@ -40,31 +40,19 @@ jobs:
       - name: Inject J3 T720 host generator
         run: |
           cp tools/j3y17lte/j3_midgard_copy_gen.c \
-            mesa/src/panfrost/compiler/j3_midgard_copy_gen.c
+            mesa/src/panfrost/clc/j3_midgard_copy_gen.c
 
-          cat >> mesa/src/panfrost/meson.build <<'MESON'
+          cat >> mesa/src/panfrost/clc/meson.build <<'MESON'
 
           j3_midgard_copy_gen = executable(
             'j3_midgard_copy_gen',
-            files('compiler/j3_midgard_copy_gen.c'),
-            include_directories : [
-              inc_include,
-              inc_src,
-              inc_panfrost,
-            ],
-            dependencies : [
-              idep_vtn,
-              idep_nir,
-              idep_mesautil,
-              libpanfrost_dep,
-            ],
-            link_with : [
-              libpanfrost_compiler,
-            ],
-            c_args : [
-              no_override_init_args,
-              soong_compat_c_args,
-            ],
+            ['j3_midgard_copy_gen.c'],
+            link_with : [libpanfrost_compiler],
+            include_directories : [inc_include, inc_src],
+            c_args : [c_msvc_compat_args, no_override_init_args, soong_compat_c_args],
+            link_args : [ld_args_build_id],
+            dependencies : [idep_vtn, idep_nir, idep_mesautil, libpanfrost_dep],
+            native : not meson.can_run_host_binaries(),
             build_by_default : true,
           )
           MESON
@@ -86,10 +74,10 @@ jobs:
 
       - name: Build and run T720 generator
         run: |
-          ninja -C mesa/build src/panfrost/j3_midgard_copy_gen
+          ninja -C mesa/build src/panfrost/clc/j3_midgard_copy_gen
 
           mkdir -p generated/j3xnu097
-          mesa/build/src/panfrost/j3_midgard_copy_gen \
+          mesa/build/src/panfrost/clc/j3_midgard_copy_gen \
             generated/j3xnu097/j3_t720_present_copy.bin \
             generated/j3xnu097/j3_t720_present_copy.txt
 
