@@ -118,6 +118,8 @@ jobs:
           cat generated/j3xnu097/j3_t720_present_copy.txt
           echo "===== SHA256 ====="
           cat generated/j3xnu097/SHA256SUMS
+          echo "===== GENERATED HEADER ====="
+          cat generated/j3xnu097/j3_t720_present_copy.h
 
       - name: Upload generated Midgard artifacts
         uses: actions/upload-artifact@v4
