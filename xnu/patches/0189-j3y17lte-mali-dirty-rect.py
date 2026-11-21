@@ -111,3 +111,117 @@ replace_once(
     "context old-global cleanup",
 )
 
+new_init = r"""static bool
+j3_mali_compute_init(vm_offset_t mali)
+{
+	struct j3_mali_compute_ctx *c = &j3_mali_compute;
+	if (c->initialized) {
+		return !c->disabled;
+	}
+	bzero(c, sizeof(*c));
+	if (j3_mali_pt_alloc(&c->pt) < 0) {
+		return false;
+	}
+	c->resourcePage = IOMallocAligned(4096, 4096);
+	if (!c->resourcePage) {
+		j3_mali_pt_destroy(&c->pt);
+		return false;
+	}
+	bzero(c->resourcePage, 4096);
+	c->resourcePA = (uint64_t)ml_vtophys((vm_offset_t)c->resourcePage);
+	if (!c->resourcePA || (c->resourcePA & 0xfffULL)) {
+		IOFreeAligned(c->resourcePage, 4096);
+		c->resourcePage = NULL;
+		j3_mali_pt_destroy(&c->pt);
+		return false;
+	}
+
+	uint8_t *r = (uint8_t *)c->resourcePage;
+	memcpy(r + J3_MALI_FULL_SHADER_OFF, j3_mali_copy_shader,
+	    sizeof(j3_mali_copy_shader));
+	memcpy(r + J3_MALI_RECT_SHADER_OFF, j3_mali_rect_shader,
+	    sizeof(j3_mali_rect_shader));
+
+	static const uint8_t fullRsdTemplate[64] = {
+		0x05,0x50,0x34,0x12,0,0,0,0, 0,0,0,0,0,0,0,0,
+		0x01,0x00,0x01,0x00,0,0,0,0, 0,0,0,0,0,0,0,0,
+		0,0,0,0,0,0,0,0, 0,0,0,0,0,0,0,0,
+		0,0,0,0,0,0,0,0, 0,0,0,0,0,0,0,0
+	};
+	static const uint8_t rectRsdTemplate[64] = {
+		0x05,0x50,0x34,0x12,0,0,0,0, 0,0,0,0,0,0,0,0,
+		0x01,0x00,0x02,0x00,0,0,0,0, 0,0,0,0,0,0,0,0,
+		0,0,0,0,0,0,0,0, 0,0,0,0,0,0,0,0,
+		0,0,0,0,0,0,0,0, 0,0,0,0,0,0,0,0
+	};
+	memcpy(r + J3_MALI_FULL_RSD_OFF, fullRsdTemplate, sizeof(fullRsdTemplate));
+	memcpy(r + J3_MALI_RECT_RSD_OFF, rectRsdTemplate, sizeof(rectRsdTemplate));
+	*(uint64_t *)(r + J3_MALI_FULL_RSD_OFF) =
+	    (J3_MALI_COPY_RES_VA + J3_MALI_FULL_SHADER_OFF) | 5ULL;
+	*(uint64_t *)(r + J3_MALI_RECT_RSD_OFF) =
+	    (J3_MALI_COPY_RES_VA + J3_MALI_RECT_SHADER_OFF) | 5ULL;
+	/* Midgard RSD renderer-properties bit 13: shader has global side effects. */
+	((uint32_t *)(r + J3_MALI_FULL_RSD_OFF))[4] |= (1u << 13);
+	((uint32_t *)(r + J3_MALI_RECT_RSD_OFF))[4] |= (1u << 13);
+
+	static const uint8_t tlsTemplate[32] = {
+		0,0,0,0,0x1f,0,0,0, 0,0,0,0,0,0,0,0,
+		0,0,0,0,0,0,0,0, 0,0,0,0,0,0,0,0
+	};
+	memcpy(r + J3_MALI_COPY_TLS_OFF, tlsTemplate, sizeof(tlsTemplate));
+
+	uint64_t uboDataVA = J3_MALI_COPY_RES_VA + J3_MALI_COPY_UBO_DATA_OFF;
+	*(uint64_t *)(r + J3_MALI_COPY_UBO_DESC_OFF) =
+	    ((uboDataVA >> 4) << 12) | 2ULL;
+
+	static const uint8_t jobTemplate[192] = {
+		0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
+		0x09,0x01,0x01,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
+		0x3f,0x00,0x00,0x00,0xc6,0x18,0x86,0x61,0x00,0x00,0x00,0x24,0x00,0x00,0x00,0x00,
+		0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
+		0x07,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
+		0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x80,0x67,0x45,0x00,0x00,0x00,0x00,
+		0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
+		0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x60,0x45,0x23,0x00,0x00,0x00,0x00,
+		0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
+		0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
+		0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
+		0x00,0x70,0x56,0x34,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00
+	};
+	memcpy(r + J3_MALI_COPY_JOB_OFF, jobTemplate, sizeof(jobTemplate));
+	*(uint64_t *)(r + J3_MALI_COPY_JOB_OFF + 88) =
+	    J3_MALI_COPY_RES_VA + J3_MALI_COPY_UBO_DESC_OFF;
+	*(uint64_t *)(r + J3_MALI_COPY_JOB_OFF + 120) =
+	    J3_MALI_COPY_RES_VA + J3_MALI_FULL_RSD_OFF;
+	*(uint64_t *)(r + J3_MALI_COPY_JOB_OFF + 176) =
+	    J3_MALI_COPY_RES_VA + J3_MALI_COPY_TLS_OFF;
+
+	if (!j3_mali_pt_map_page(&c->pt, J3_MALI_COPY_RES_VA,
+	    c->resourcePA, j3_mali_live_attr)) {
+		return false;
+	}
+	for (uint64_t off = 0; off < J3_MALI_COPY_BYTES; off += 0x1000ULL) {
+		if (!j3_mali_pt_map_page(&c->pt, J3_MALI_COPY_DST_VA + off,
+		    J3_MALI_FB_PA + off, j3_mali_live_attr)) {
+			return false;
+		}
+	}
+	j3_mali_pt_clean(&c->pt);
+	flush_dcache64((addr64_t)(uintptr_t)c->resourcePage, 4096, FALSE);
+	if (!j3_mali_compute_program_as0(mali)) {
+		return false;
+	}
+	c->initialized = true;
+	IOLog("J3 GPU: dual compute ARMED JS1 full=112B rect=592B slots=%u ptpages=%u\n",
+	    J3_MALI_SOURCE_SLOTS, c->pt.count);
+	return true;
+}
+
+"""
+replace_span(
+    "static bool\nj3_mali_compute_init(vm_offset_t mali)\n{\n",
+    "static int\nj3_mali_compute_poll(vm_offset_t mali, bool wait)\n",
+    new_init,
+    "compute init",
+)
+
