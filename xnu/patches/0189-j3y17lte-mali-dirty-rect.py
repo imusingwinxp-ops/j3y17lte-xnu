@@ -563,17 +563,7 @@ swap_end_new = """\t\ts->release();
 
 bool
 IOMobileFramebufferUserClient::initWithTask"""
-if swap_end_old not in text:
-    marker = "\t\ts->release();\n\t}\n"
-    pos = text.find(marker)
-    if pos < 0:
-        raise SystemExit("J3XNU099 swap stats: loop end anchor not found")
-    tail = text.find("\nbool\nIOMobileFramebufferUserClient::initWithTask", pos)
-    if tail < 0:
-        raise SystemExit("J3XNU099 swap stats: user-client anchor not found")
-    text = text[:pos] + swap_end_new[:-len("bool\nIOMobileFramebufferUserClient::initWithTask")] + text[tail+1:]
-else:
-    text = text.replace(swap_end_old, swap_end_new, 1)
+replace_once(swap_end_old, swap_end_new, "swap stats")
 
 replace_once(
     '#if defined(ARM64_BOARD_CONFIG_J3Y17LTE)\n\tuint32_t hz = 60;\n\tPE_parse_boot_argn("j3fb_hz", &hz, sizeof(hz));',
