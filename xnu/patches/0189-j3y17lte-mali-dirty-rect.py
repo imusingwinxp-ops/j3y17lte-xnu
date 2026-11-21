@@ -502,3 +502,92 @@ replace_span(
     "poll/presenter",
 )
 
+replace_once(
+    "AppleCLCD::swap(const uint8_t *rec)\n{\n\tuint32_t mask = get32(rec, 0x104);\n",
+    "AppleCLCD::swap(const uint8_t *rec)\n{\n\tuint32_t mask = get32(rec, 0x104);\n#if defined(ARM64_BOARD_CONFIG_J3Y17LTE)\n\tj3_mali_swap_count++;\n#endif\n",
+    "swap counter",
+)
+
+swap_block = r"""		if (src != 0 && bpe == 4) {
+#if defined(ARM64_BOARD_CONFIG_J3Y17LTE)
+			bool singleLayer = mask != 0 && (mask & (mask - 1u)) == 0;
+			int present = j3_mali_present_rect(s, src,
+			    sx, sy, dx, dy, w, h, singleLayer);
+			if (present == J3_MALI_PRESENT_FAIL) {
+				j3_mali_cpu_fallbacks++;
+				for (int32_t y = 0; y < h; y++) {
+					memcpy((void *)(fPixels + (uint64_t)(dy + y) * fRowBytes + (uint64_t)dx * 4),
+					    (const void *)(src + s->offset + (uint64_t)(sy + y) * s->bytesPerRow + (uint64_t)sx * 4),
+					    (size_t)w * 4);
+				}
+			}
+#else
+			for (int32_t y = 0; y < h; y++) {
+				memcpy((void *)(fPixels + (uint64_t)(dy + y) * fRowBytes + (uint64_t)dx * 4),
+				    (const void *)(src + s->offset + (uint64_t)(sy + y) * s->bytesPerRow + (uint64_t)sx * 4),
+				    (size_t)w * 4);
+			}
+#endif
+		}"""
+replace_span(
+    "\t\tif (src != 0 && bpe == 4) {\n",
+    "\n\t\ts->release();",
+    swap_block,
+    "swap pixel path",
+)
+
+swap_end_old = """\t\ts->release();
+\t}
+}
+
+bool
+IOMobileFramebufferUserClient::initWithTask"""
+swap_end_new = """\t\ts->release();
+\t}
+#if defined(ARM64_BOARD_CONFIG_J3Y17LTE)
+\tif (j3_mali_swap_count <= 8ULL || (j3_mali_swap_count % 120ULL) == 0ULL) {
+\t\tstruct j3_mali_compute_ctx *c = &j3_mali_compute;
+\t\tIOLog("J3 GPU: rect stats swap=%llu gpu_rect=%llu gpu_full=%llu gpu_busy=%llu cpu_copy=%llu clean_bytes=%llu gpu_bytes=%llu submit=%llu done=%llu hit=%llu remap=%llu\\n",
+\t\t    j3_mali_swap_count, c->gpuRect, c->gpuFull, c->busyFrames,
+\t\t    j3_mali_cpu_fallbacks, c->cleanBytes, c->gpuBytes,
+\t\t    c->submittedFrames, c->completedFrames, c->sourceHits,
+\t\t    c->sourceRemaps);
+\t}
+#endif
+}
+
+bool
+IOMobileFramebufferUserClient::initWithTask"""
+replace_once(swap_end_old, swap_end_new, "swap stats")
+
+replace_once(
+    '#if defined(ARM64_BOARD_CONFIG_J3Y17LTE)\n\tuint32_t hz = 60;\n\tPE_parse_boot_argn("j3fb_hz", &hz, sizeof(hz));',
+    '#if defined(ARM64_BOARD_CONFIG_J3Y17LTE)\n\tuint32_t hz = 30;\n\tPE_parse_boot_argn("j3fb_hz", &hz, sizeof(hz));',
+    "30 Hz default",
+)
+
+stale = [
+    "j3_mali_present_surface(",
+    "full-frame compute ARMED JS1 shader=112B",
+    "async present ARMED slots=",
+    "present stats submit=",
+]
+for marker in stale:
+    if marker in text:
+        raise SystemExit(f"J3XNU099 stale marker remains: {marker}")
+
+required = [
+    "static const uint8_t j3_mali_rect_shader[592]",
+    "J3 GPU: dual compute ARMED JS1 full=112B rect=592B",
+    "j3_mali_pack_groups",
+    "j3_mali_clean_source_rect",
+    "j3_mali_present_rect",
+    "J3 GPU: rect stats swap=%llu gpu_rect=%llu gpu_full=%llu gpu_busy=%llu cpu_copy=%llu clean_bytes=%llu gpu_bytes=%llu",
+    "uint32_t hz = 30;",
+]
+for marker in required:
+    if marker not in text:
+        raise SystemExit(f"J3XNU099 required marker missing: {marker}")
+
+path.write_text(text)
+print("J3XNU099 dirty-rectangle Mali transform: PASS")
