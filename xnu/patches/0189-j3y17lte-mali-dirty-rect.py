@@ -330,3 +330,175 @@ j3_mali_clean_source_rect(struct j3_mali_compute_ctx *c, uintptr_t src,
 	}
 }
 
+static int
+j3_mali_present_rect(SweetSurface *s, uintptr_t src,
+    int32_t sxIn, int32_t syIn, int32_t dxIn, int32_t dyIn,
+    int32_t wIn, int32_t hIn, bool async)
+{
+	if (!j3_mali_live_ready || !j3_mali_live_base || !s || !s->memory ||
+	    j3_mali_compute.disabled || !src ||
+	    sxIn < 0 || syIn < 0 || dxIn < 0 || dyIn < 0 ||
+	    wIn <= 0 || hIn <= 0 || (s->offset & 3u)) {
+		return J3_MALI_PRESENT_FAIL;
+	}
+
+	vm_offset_t mali = j3_mali_live_base;
+	if (!j3_mali_compute_init(mali)) {
+		j3_mali_compute.disabled = true;
+		IOLog("J3 GPU: dual compute FALLBACK init failed\n");
+		return J3_MALI_PRESENT_FAIL;
+	}
+	struct j3_mali_compute_ctx *c = &j3_mali_compute;
+
+	/*
+	 * 098 could return BUSY from the async path and silently lose a visible
+	 * update. 099 never drops one: poll cheaply first, then wait only when
+	 * the previous JS1 job really is still running.
+	 */
+	if (c->inFlight) {
+		int state = j3_mali_compute_poll(mali, false);
+		if (state == J3_MALI_PRESENT_BUSY) {
+			state = j3_mali_compute_poll(mali, true);
+		}
+		if (state == J3_MALI_PRESENT_FAIL) {
+			return state;
+		}
+	}
+
+	uint32_t sx = (uint32_t)sxIn;
+	uint32_t sy = (uint32_t)syIn;
+	uint32_t dx = (uint32_t)dxIn;
+	uint32_t dy = (uint32_t)dyIn;
+	uint32_t w = (uint32_t)wIn;
+	uint32_t h = (uint32_t)hIn;
+	uint64_t pixels64 = (uint64_t)w * h;
+	if (!pixels64 || pixels64 > J3_MALI_COPY_WORDS) {
+		return J3_MALI_PRESENT_FAIL;
+	}
+	unsigned groups = (unsigned)((pixels64 + 63ULL) / 64ULL);
+	if (!groups || groups > 14400u) {
+		return J3_MALI_PRESENT_FAIL;
+	}
+
+	uint32_t mapOffset = s->offset & ~0xfffu;
+	uint32_t mapDelta = s->offset - mapOffset;
+	uint64_t lastByte = (uint64_t)mapDelta +
+	    (uint64_t)sy * s->bytesPerRow + (uint64_t)sx * 4ULL +
+	    (uint64_t)(h - 1u) * s->bytesPerRow + (uint64_t)w * 4ULL;
+	uint64_t mapBytes = (lastByte + 0xfffULL) & ~0xfffULL;
+	if (!mapBytes || mapBytes > J3_MALI_COPY_SRC_MAX_BYTES ||
+	    (uint64_t)mapOffset + mapBytes > s->memory->getLength()) {
+		return J3_MALI_PRESENT_FAIL;
+	}
+
+	unsigned slot = J3_MALI_SOURCE_SLOTS;
+	for (unsigned i = 0; i < J3_MALI_SOURCE_SLOTS; i++) {
+		if (c->sourceMemory[i] == s->memory &&
+		    c->sourceOffset[i] == mapOffset &&
+		    c->sourceBytes[i] >= mapBytes) {
+			slot = i;
+			break;
+		}
+	}
+	if (slot == J3_MALI_SOURCE_SLOTS) {
+		slot = c->nextSourceSlot++ % J3_MALI_SOURCE_SLOTS;
+		uint64_t sourceVA = J3_MALI_COPY_SRC_VA +
+		    (uint64_t)slot * J3_MALI_COPY_SRC_STRIDE;
+		if (!j3_mali_map_md_range(&c->pt, s->memory, mapOffset,
+		    sourceVA, mapBytes, j3_mali_live_attr)) {
+			IOLog("J3 GPU: rect source map fallback id=%u off=%u map=%u bytes=%llu slot=%u\n",
+			    s->id, s->offset, mapOffset, mapBytes, slot);
+			return J3_MALI_PRESENT_FAIL;
+		}
+		j3_mali_pt_clean(&c->pt);
+		if (!j3_mali_compute_program_as0(mali)) {
+			c->disabled = true;
+			return J3_MALI_PRESENT_FAIL;
+		}
+		if (c->sourceMemory[slot]) {
+			c->sourceMemory[slot]->release();
+		}
+		s->memory->retain();
+		c->sourceMemory[slot] = s->memory;
+		c->sourceOffset[slot] = mapOffset;
+		c->sourceBytes[slot] = mapBytes;
+		c->sourceRemaps++;
+	} else {
+		c->sourceHits++;
+	}
+
+	uint64_t sourceVA = J3_MALI_COPY_SRC_VA +
+	    (uint64_t)slot * J3_MALI_COPY_SRC_STRIDE + mapDelta;
+	uint8_t *r = (uint8_t *)c->resourcePage;
+	uint8_t *ubo = r + J3_MALI_COPY_UBO_DATA_OFF;
+	uint8_t *job = r + J3_MALI_COPY_JOB_OFF;
+	bool fullLinear = sx == 0u && sy == 0u && dx == 0u && dy == 0u &&
+	    w == J3_MALI_FB_WIDTH && h == J3_MALI_FB_HEIGHT &&
+	    s->bytesPerRow == J3_MALI_FB_STRIDE;
+
+	bzero(ubo, J3_MALI_RECT_UBO_BYTES);
+	*(uint64_t *)(ubo + 0) = sourceVA;
+	*(uint64_t *)(ubo + 8) = J3_MALI_COPY_DST_VA;
+	if (fullLinear) {
+		*(uint32_t *)(ubo + 16) = J3_MALI_COPY_WORDS;
+		*(uint64_t *)(job + 120) =
+		    J3_MALI_COPY_RES_VA + J3_MALI_FULL_RSD_OFF;
+		groups = 14400u;
+	} else {
+		*(uint32_t *)(ubo + 16) = s->bytesPerRow;
+		*(uint32_t *)(ubo + 20) = J3_MALI_FB_STRIDE;
+		*(uint32_t *)(ubo + 24) = sx;
+		*(uint32_t *)(ubo + 28) = sy;
+		*(uint32_t *)(ubo + 32) = dx;
+		*(uint32_t *)(ubo + 36) = dy;
+		*(uint32_t *)(ubo + 40) = w;
+		*(uint32_t *)(ubo + 44) = h;
+		*(uint64_t *)(job + 120) =
+		    J3_MALI_COPY_RES_VA + J3_MALI_RECT_RSD_OFF;
+	}
+	if (!j3_mali_pack_groups(job + J3_MALI_JOB_INVOCATION_OFF, groups)) {
+		return J3_MALI_PRESENT_FAIL;
+	}
+
+	j3_mali_clean_source_rect(c, src, s, sx, sy, w, h);
+	flush_dcache64((addr64_t)(uintptr_t)ubo, J3_MALI_RECT_UBO_BYTES, FALSE);
+	/* 32..127 covers dynamic INVOCATION and the RSD pointer at job+120. */
+	flush_dcache64((addr64_t)(uintptr_t)(job + J3_MALI_JOB_INVOCATION_OFF),
+	    96u, FALSE);
+	__asm__ volatile("dsb sy" ::: "memory");
+
+	j3_gpu_write(mali, J3_MALI_JOB_IRQ_CLEAR,
+	    J3_MALI_JOB_DONE1 | J3_MALI_JOB_FAIL1);
+	j3_gpu_write(mali, J3_MALI_MMU_IRQ_CLEAR,
+	    J3_MALI_MMU_PAGE_FAULT0 | J3_MALI_MMU_BUS_ERROR0);
+	uint64_t jobVA = J3_MALI_COPY_RES_VA + J3_MALI_COPY_JOB_OFF;
+	j3_gpu_write(mali, J3_MALI_JS1_HEAD_NEXT_LO, (uint32_t)jobVA);
+	j3_gpu_write(mali, J3_MALI_JS1_HEAD_NEXT_HI, (uint32_t)(jobVA >> 32));
+	uint32_t shader = j3_gpu_read(mali, J3_MALI_SHADER_READY);
+	j3_gpu_write(mali, J3_MALI_JS1_AFFINITY_NEXT_LO, shader ? shader : 1u);
+	j3_gpu_write(mali, J3_MALI_JS1_AFFINITY_NEXT_HI, 0);
+	j3_gpu_write(mali, J3_MALI_JS1_CONFIG_NEXT, J3_MALI_JS_CFG);
+	j3_gpu_write(mali, J3_MALI_JS1_COMMAND_NEXT, J3_MALI_JS_START);
+	c->inFlight = true;
+	c->submittedFrames++;
+	c->gpuBytes += pixels64 * 4ULL;
+	if (fullLinear) {
+		c->gpuFull++;
+	} else {
+		c->gpuRect++;
+	}
+
+	if (async) {
+		return J3_MALI_PRESENT_SUBMITTED;
+	}
+	return j3_mali_compute_poll(mali, true);
+}
+
+"""
+replace_span(
+    "static int\nj3_mali_compute_poll(vm_offset_t mali, bool wait)\n",
+    "/*\n * Credit-efficient validation ladder.",
+    new_present,
+    "poll/presenter",
+)
+
