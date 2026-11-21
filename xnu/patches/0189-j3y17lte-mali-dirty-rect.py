@@ -225,3 +225,108 @@ replace_span(
     "compute init",
 )
 
+new_present = r"""static int
+j3_mali_compute_poll(vm_offset_t mali, bool wait)
+{
+	struct j3_mali_compute_ctx *c = &j3_mali_compute;
+	uint32_t irq = 0;
+	uint32_t mmuRaw = 0;
+	unsigned limit = wait ? 2000000u : 1u;
+
+	for (unsigned spin = 0; spin < limit; spin++) {
+		mmuRaw = j3_gpu_read(mali, J3_MALI_MMU_IRQ_RAWSTAT);
+		irq = j3_gpu_read(mali, J3_MALI_JOB_IRQ_RAWSTAT);
+		if ((mmuRaw & (J3_MALI_MMU_PAGE_FAULT0 | J3_MALI_MMU_BUS_ERROR0)) ||
+		    (irq & J3_MALI_JOB_FAIL1)) {
+			IOLog("J3 GPU: rect present FALLBACK irq=%#x mmu=%#x js1=%#x fault=%#x@%#x:%08x\n",
+			    irq, mmuRaw, j3_gpu_read(mali, J3_MALI_JS1_STATUS),
+			    j3_gpu_read(mali, J3_MALI_AS0_FAULTSTATUS),
+			    j3_gpu_read(mali, J3_MALI_AS0_FAULTADDRESS_HI),
+			    j3_gpu_read(mali, J3_MALI_AS0_FAULTADDRESS_LO));
+			j3_mali_compute_recover(mali, irq, mmuRaw);
+			c->inFlight = false;
+			c->disabled = true;
+			return J3_MALI_PRESENT_FAIL;
+		}
+		if (irq & J3_MALI_JOB_DONE1) {
+			j3_gpu_write(mali, J3_MALI_JOB_IRQ_CLEAR, J3_MALI_JOB_DONE1);
+			__asm__ volatile("dsb sy" ::: "memory");
+			c->inFlight = false;
+			c->completedFrames++;
+			j3_mali_present_frames++;
+			return J3_MALI_PRESENT_SUBMITTED;
+		}
+		if (wait) {
+			__asm__ volatile("yield");
+		}
+	}
+
+	if (wait) {
+		IOLog("J3 GPU: rect present FALLBACK timeout js1=%#x irq=%#x mmu=%#x\n",
+		    j3_gpu_read(mali, J3_MALI_JS1_STATUS), irq, mmuRaw);
+		j3_mali_compute_recover(mali, irq, mmuRaw);
+		c->inFlight = false;
+		c->disabled = true;
+		return J3_MALI_PRESENT_FAIL;
+	}
+
+	c->busyFrames++;
+	return J3_MALI_PRESENT_BUSY;
+}
+
+static unsigned
+j3_mali_ceil_log2(unsigned value)
+{
+	if (value <= 1u) {
+		return 0u;
+	}
+	unsigned n = 0u;
+	value--;
+	while (value) {
+		value >>= 1;
+		n++;
+	}
+	return n;
+}
+
+/*
+ * Exact PAN_ARCH=4 1D workgroup packing captured from Mesa/Panfrost.
+ * Locals are fixed at 64x1x1; only group count X changes per rectangle.
+ */
+static bool
+j3_mali_pack_groups(uint8_t *invocation, unsigned groups)
+{
+	if (!invocation || groups == 0u || groups > 14400u) {
+		return false;
+	}
+	unsigned groupEnd = 6u + j3_mali_ceil_log2(groups);
+	uint32_t invocations = 0x3fu | ((groups - 1u) << 6);
+	uint32_t shifts = 6u | (6u << 5) | (6u << 10) |
+	    (groupEnd << 16) | (groupEnd << 22) | (6u << 28);
+	memcpy(invocation + 0, &invocations, sizeof(invocations));
+	memcpy(invocation + 4, &shifts, sizeof(shifts));
+	return true;
+}
+
+static void
+j3_mali_clean_source_rect(struct j3_mali_compute_ctx *c, uintptr_t src,
+    SweetSurface *s, uint32_t sx, uint32_t sy, uint32_t w, uint32_t h)
+{
+	uint64_t rowBytes = (uint64_t)w * 4ULL;
+	uint64_t base = (uint64_t)src + (uint64_t)s->offset +
+	    (uint64_t)sy * s->bytesPerRow + (uint64_t)sx * 4ULL;
+
+	if (sx == 0u && rowBytes == s->bytesPerRow) {
+		uint64_t bytes = rowBytes * h;
+		flush_dcache64((addr64_t)base, (unsigned)bytes, FALSE);
+		c->cleanBytes += bytes;
+		return;
+	}
+
+	for (uint32_t y = 0; y < h; y++) {
+		flush_dcache64((addr64_t)(base + (uint64_t)y * s->bytesPerRow),
+		    (unsigned)rowBytes, FALSE);
+		c->cleanBytes += rowBytes;
+	}
+}
+
