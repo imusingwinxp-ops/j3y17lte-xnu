@@ -503,8 +503,8 @@ replace_span(
 )
 
 replace_once(
-    "AppleCLCD::swap(const uint8_t *rec)\n{\n\tuint32_t mask = get32(rec, 0x104);\n",
-    "AppleCLCD::swap(const uint8_t *rec)\n{\n\tuint32_t mask = get32(rec, 0x104);\n#if defined(ARM64_BOARD_CONFIG_J3Y17LTE)\n\tj3_mali_swap_count++;\n#endif\n",
+    "\tuint32_t mask = get32(rec, 0x104);\n",
+    "\tuint32_t mask = get32(rec, 0x104);\n#if defined(ARM64_BOARD_CONFIG_J3Y17LTE)\n\tj3_mali_swap_count++;\n#endif\n",
     "swap counter",
 )
 
@@ -529,12 +529,17 @@ swap_block = r"""		if (src != 0 && bpe == 4) {
 			}
 #endif
 		}"""
-replace_span(
-    "\t\tif (src != 0 && bpe == 4) {\n",
-    "\n\t\ts->release();",
-    swap_block,
-    "swap pixel path",
-)
+pixel_start = "\t\tif (src != 0 && bpe == 4) {\n"
+pixel_end = "\n\t\ts->release();"
+pixel_i = text.find(pixel_start)
+if pixel_i < 0:
+    raise SystemExit("J3XNU099 swap pixel path: start anchor not found")
+pixel_j = text.find(pixel_end, pixel_i)
+if pixel_j < 0:
+    raise SystemExit("J3XNU099 swap pixel path: end anchor not found")
+if "j3_mali_cpu_fallbacks++;" not in text[pixel_i:pixel_j]:
+    raise SystemExit("J3XNU099 swap pixel path: expected J3XNU098 body not found")
+text = text[:pixel_i] + swap_block + text[pixel_j:]
 
 swap_end_old = """\t\ts->release();
 \t}
@@ -558,7 +563,17 @@ swap_end_new = """\t\ts->release();
 
 bool
 IOMobileFramebufferUserClient::initWithTask"""
-replace_once(swap_end_old, swap_end_new, "swap stats")
+if swap_end_old not in text:
+    marker = "\t\ts->release();\n\t}\n"
+    pos = text.find(marker)
+    if pos < 0:
+        raise SystemExit("J3XNU099 swap stats: loop end anchor not found")
+    tail = text.find("\nbool\nIOMobileFramebufferUserClient::initWithTask", pos)
+    if tail < 0:
+        raise SystemExit("J3XNU099 swap stats: user-client anchor not found")
+    text = text[:pos] + swap_end_new[:-len("bool\nIOMobileFramebufferUserClient::initWithTask")] + text[tail+1:]
+else:
+    text = text.replace(swap_end_old, swap_end_new, 1)
 
 replace_once(
     '#if defined(ARM64_BOARD_CONFIG_J3Y17LTE)\n\tuint32_t hz = 60;\n\tPE_parse_boot_argn("j3fb_hz", &hz, sizeof(hz));',
