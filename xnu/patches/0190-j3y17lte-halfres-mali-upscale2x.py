@@ -322,16 +322,25 @@ cpu_new = """				j3_mali_cpu_fallbacks++;
 fb = replace_once(fb, cpu_old, cpu_new, "2x CPU fallback")
 
 # Strong device-visible identity for the one paid shot.
-register_anchor = """	registerService();
-	IOLog("SWEET FB: AppleCLCD %ux%u stride %u at 0x%llx, default surface %u, presented as %ux%u\n",
-	    fWidth, fHeight, fRowBytes, fPhys, fSurface->id, fLogicalW, fLogicalH);
-"""
-register_new = register_anchor + """#if defined(ARM64_BOARD_CONFIG_J3Y17LTE)
+# Do not exact-match C's "\\n" inside a normal Python string: that escape
+# becomes a real newline at runtime. Locate the unique AppleCLCD startup log
+# structurally and insert immediately after its terminating semicolon.
+startup_prefix = '\tIOLog("SWEET FB: AppleCLCD '
+startup_i = fb.find(startup_prefix)
+if startup_i < 0:
+    raise SystemExit("J3XNU100 halfres startup log: AppleCLCD IOLog not found")
+if fb.find(startup_prefix, startup_i + 1) >= 0:
+    raise SystemExit("J3XNU100 halfres startup log: AppleCLCD IOLog not unique")
+startup_end = fb.find(";\n", startup_i)
+if startup_end < 0:
+    raise SystemExit("J3XNU100 halfres startup log: terminator not found")
+startup_end += 2
+startup_insert = r"""#if defined(ARM64_BOARD_CONFIG_J3Y17LTE)
 	IOLog("J3 FB: HALFRES 360x640 scale1 -> Mali 2x -> 720x1280 scanout, default surface %u\n",
 	    fSurface->id);
 #endif
 """
-fb = replace_once(fb, register_anchor, register_new, "halfres startup log")
+fb = fb[:startup_end] + startup_insert + fb[startup_end:]
 
 required = [
     "static const uint8_t j3_mali_rect_shader[720]",
