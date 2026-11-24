@@ -63,28 +63,31 @@
  
 --- a/bsd/conf/files
 +++ b/bsd/conf/files
-@@ -107,6 +107,7 @@ bsd/dev/memdev.c			standard
+@@ -107,7 +107,8 @@ bsd/dev/memdev.c			standard
  bsd/dev/sweet_ufs.c			standard
  bsd/dev/j3y17lte_emmc.c			standard
  bsd/dev/j3y17lte_input.c			standard
+ bsd/dev/j3y17lte_power.c			standard
 +bsd/dev/j3y17lte_wlbt.c			standard
  bsd/dev/sweet_sample.c			standard
  bsd/dev/sweet_keys.c			standard
  bsd/dev/sweet_touch.c			standard
 --- a/iokit/bsddev/IOKitBSDInit.cpp
 +++ b/iokit/bsddev/IOKitBSDInit.cpp
-@@ -70,6 +70,7 @@ extern boolean_t cpuid_vmm_present(void);
+@@ -70,7 +70,8 @@ extern boolean_t cpuid_vmm_present(void);
  #if defined(ARM64_BOARD_CONFIG_J3Y17LTE)
  extern void j3y17lte_emmc_probe(void);
  extern void j3y17lte_input_init(void);
+ extern void j3y17lte_power_init(void);
 +extern void j3y17lte_wlbt_init(void);
  #endif
  
  #define ROUNDUP(a, b) (((a) + ((b) - 1)) & (~((b) - 1)))
-@@ -772,6 +773,7 @@ IOKitBSDInit(void)
+@@ -772,7 +773,8 @@ IOKitBSDInit(void)
  
  #if defined(ARM64_BOARD_CONFIG_J3Y17LTE)
  	j3y17lte_input_init();
+ 	j3y17lte_power_init();
 +	j3y17lte_wlbt_init();
  	{
  	uint32_t emmcprobe = 0;
