@@ -1,0 +1,28 @@
+--- a/bsd/dev/j3y17lte_input.c
++++ b/bsd/dev/j3y17lte_input.c
+@@ -54,6 +54,8 @@
+ #define J3_TOUCH_STRIDE         7u
+ #define J3_TOUCH_W              720u
+ #define J3_TOUCH_H              1280u
++#define J3_TOUCH_POLL_MS        8u
++#define J3_TOUCH_HEALTH_TICKS   64u
+ 
+ static vm_offset_t j3_keys_gpio;
+ static vm_offset_t j3_touch_gpio;
+@@ -958,7 +960,7 @@ j3_touch_frame(void)
+ 	 * The Samsung driver reinitialises in that case.  Poll it cheaply so
+ 	 * lock/wake or panel power transitions cannot leave touch dead forever.
+ 	 */
+-	if (++health_tick >= 25u) {
++	if (++health_tick >= J3_TOUCH_HEALTH_TICKS) {
+ 		uint8_t status = 0;
+ 		health_tick = 0;
+ 		if (!j3_f01_data || !j3_rmi_read(j3_f01_data, &status, 1)) {
+@@ -1042,7 +1044,7 @@ j3_touch_thread(void *arg, wait_result_t result)
+ 		} else {
+ 			errors = 0;
+ 		}
+-		j3_sleep_ms(&j3_touch_sleep_chan, 20);
++		j3_sleep_ms(&j3_touch_sleep_chan, J3_TOUCH_POLL_MS);
+ 	}
+ }
