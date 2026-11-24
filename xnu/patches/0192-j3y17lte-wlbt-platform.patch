@@ -21,7 +21,7 @@
  #define J3_RAM_TOTAL   ((uint64_t)0x7e800000ULL)
  
  extern vm_offset_t mem_size;
-@@ -191,16 +192,18 @@ j3y17lte_add_bank1(void)
+@@ -191,20 +192,21 @@ j3y17lte_add_bank1(void)
  	if ((pmap_paddr_t)first_avail > hotadd_start) {
  		hotadd_start = (pmap_paddr_t)first_avail;
  	}
@@ -91,7 +91,7 @@
  	PE_parse_boot_argn("emmcprobe", &emmcprobe, sizeof(emmcprobe));
 --- /dev/null
 +++ b/bsd/dev/j3y17lte_wlbt.c
-@@ -0,0 +1,492 @@
+@@ -0,0 +1,528 @@
 +/*
 + * J3Y17LTE Samsung SCSC/MX140 WLBT bring-up.
 + *
