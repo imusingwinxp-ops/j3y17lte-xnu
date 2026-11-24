@@ -110,6 +110,7 @@
 +#include <kern/clock.h>
 +#include <kern/thread.h>
 +#include <kern/sched_prim.h>
++#include <mach/vm_types.h>
 +#include <machine/machine_routines.h>
 +#include <pexpert/pexpert.h>
 +
@@ -263,7 +264,7 @@
 +	uint32_t mask = align - 1u;
 +	uint32_t off = (a->cursor + mask) & ~mask;
 +	if (align == 0 || off > a->limit || size > a->limit - off) {
-+		return UINT32_MAX;
++		return 0xffffffffu;
 +	}
 +	a->cursor = off + size;
 +	return off;
@@ -278,7 +279,7 @@
 +	uint32_t buf = j3_alloc_region(a, bytes, 4);
 +	uint32_t ridx = j3_alloc_region(a, sizeof(uint32_t), 4);
 +	uint32_t widx = j3_alloc_region(a, sizeof(uint32_t), 4);
-+	if (buf == UINT32_MAX || ridx == UINT32_MAX || widx == UINT32_MAX) {
++	if (buf == 0xffffffffu || ridx == 0xffffffffu || widx == 0xffffffffu) {
 +		return false;
 +	}
 +	memset(a->base + buf, incoming ? 0xff : 0x00, bytes);
@@ -347,7 +348,7 @@
 +		.limit = J3_WLBT_SHARED_SIZE
 +	};
 +	uint32_t conf_off = j3_alloc_region(&a, sizeof(struct j3_mxconf), 4);
-+	if (conf_off == UINT32_MAX) {
++	if (conf_off == 0xffffffffu) {
 +		return false;
 +	}
 +	struct j3_mxconf *conf =
@@ -520,6 +521,13 @@
 +	return j3_wlbt_shared != NULL;
 +}
 +
++static __attribute__((noreturn)) void
++j3_wlbt_thread_exit(void)
++{
++	(void)thread_terminate(current_thread());
++	__builtin_unreachable();
++}
++
 +static void
 +j3_wlbt_thread(void *arg, wait_result_t result)
 +{
@@ -535,7 +543,7 @@
 +	j3_wlbt_sleep_ms(3000);
 +	if (!j3_wlbt_map()) {
 +		printf("J3 WLBT: map failed; Wi-Fi disabled\n");
-+		return;
++		j3_wlbt_thread_exit();
 +	}
 +
 +	for (unsigned int attempt = 0; attempt < 20; attempt++) {
@@ -553,12 +561,12 @@
 +	if (error != 0) {
 +		printf("J3 WLBT: no private firmware at %s; leaving radio off\n",
 +		    J3_FW_PATH);
-+		return;
++		j3_wlbt_thread_exit();
 +	}
 +	if (fw_size < J3_FW_MIN_HEADER ||
 +	    memcmp(j3_wlbt_shared + J3_FW_MAGIC_OFFSET, "smxf", 4) != 0) {
 +		printf("J3 WLBT: invalid MX140 header size=%u\n", fw_size);
-+		return;
++		j3_wlbt_thread_exit();
 +	}
 +	memcpy(&fw_runtime, j3_wlbt_shared + J3_FW_RUNTIME_OFFSET,
 +	    sizeof(fw_runtime));
@@ -568,7 +576,7 @@
 +	    J3_WLBT_SHARED_SIZE - j3_align4(fw_runtime) < 0x10000u) {
 +		printf("J3 WLBT: bad runtime=%#x image=%#x\n",
 +		    fw_runtime, fw_size);
-+		return;
++		j3_wlbt_thread_exit();
 +	}
 +	printf("J3 WLBT: firmware loaded image=%u runtime=%#x entry=%#x shared=%#llx\n",
 +	    fw_size, fw_runtime, fw_entry,
@@ -576,16 +584,17 @@
 +
 +	if (!j3_mx_config_build(fw_runtime, &mxconf_off)) {
 +		printf("J3 WLBT: transport configuration allocation failed\n");
-+		return;
++		j3_wlbt_thread_exit();
 +	}
 +	(void)j3_wlbt_power_on(fw_entry, mxconf_off);
 +	if (!j3_wait_start_ind()) {
 +		printf("J3 WLBT: firmware start timeout; powering radio down\n");
 +		j3_wlbt_power_off();
-+		return;
++		j3_wlbt_thread_exit();
 +	}
 +	j3_wlbt_started = 1;
 +	printf("J3 WLBT: firmware infrastructure online\n");
++	j3_wlbt_thread_exit();
 +}
 +
 +void
