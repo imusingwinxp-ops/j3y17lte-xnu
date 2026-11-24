@@ -527,7 +527,7 @@
 +static __attribute__((noreturn)) void
 +j3_wlbt_thread_exit(void)
 +{
-+	(void)thread_terminate(current_thread());
++	thread_terminate_self();
 +	__builtin_unreachable();
 +}
 +
