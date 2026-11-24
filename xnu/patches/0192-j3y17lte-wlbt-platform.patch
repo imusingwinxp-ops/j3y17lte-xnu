@@ -1,0 +1,613 @@
+--- a/osfmk/arm/pmap/pmap.c
++++ b/osfmk/arm/pmap/pmap.c
+@@ -1822,7 +1822,9 @@ j3y17lte_pmap_map_ram_bd(
+ 		pt_entry_t pte = pa_to_pte(paddr) | ARM_PTE_TYPE | ARM_PTE_AF |
+ 		    ARM_PTE_NX | ARM_PTE_PNX |
+ 		    ARM_PTE_AP((prot & VM_PROT_WRITE) ? AP_RWNA : AP_RONA) |
+-		    ARM_PTE_ATTRINDX(CACHE_ATTRINDX_DEFAULT) |
++		    ARM_PTE_ATTRINDX(
++		        paddr >= 0xbfc00000ULL ? CACHE_ATTRINDX_WRITECOMB :
++		        CACHE_ATTRINDX_DEFAULT) |
+ 		    ARM_PTE_SH(SH_OUTER_MEMORY);
+ #if __ARM_KERNEL_PROTECT__
+ 		pte |= ARM_PTE_NG;
+--- a/osfmk/vm/vm_init.c
++++ b/osfmk/vm/vm_init.c
+@@ -93,6 +93,7 @@ TUNABLE(bool, iokit_iomd_setownership_enabled,
+ #define J3_BANK1_START ((pmap_paddr_t)0x80000000ULL)
+ #define J3_BANK1_END   ((pmap_paddr_t)0xc0000000ULL)
+ #define J3_BANK1_SIZE  ((vm_size_t)(J3_BANK1_END - J3_BANK1_START))
++#define J3_WLBT_SHARED_START ((pmap_paddr_t)0xbfc00000ULL)
+ #define J3_RAM_TOTAL   ((uint64_t)0x7e800000ULL)
+ 
+ extern vm_offset_t mem_size;
+@@ -191,16 +192,18 @@ j3y17lte_add_bank1(void)
+ 	if ((pmap_paddr_t)first_avail > hotadd_start) {
+ 		hotadd_start = (pmap_paddr_t)first_avail;
+ 	}
+-	kprintf("J3 RAM: reserve first_avail=%#llx hotadd_start=%#llx\n",
+-	    (uint64_t)first_avail, (uint64_t)hotadd_start);
+-	if (hotadd_start > J3_BANK1_END) {
+-		hotadd_start = J3_BANK1_END;
++	if (hotadd_start > J3_WLBT_SHARED_START) {
++		hotadd_start = J3_WLBT_SHARED_START;
+ 	}
+-	const vm_size_t hotadd_size = J3_BANK1_END - hotadd_start;
++	kprintf("J3 RAM: reserve first_avail=%#llx hotadd_start=%#llx wlbt=[%#llx,%#llx)\n",
++	    (uint64_t)first_avail, (uint64_t)hotadd_start,
++	    (uint64_t)J3_WLBT_SHARED_START, (uint64_t)J3_BANK1_END);
++	const vm_size_t hotadd_size = J3_WLBT_SHARED_START - hotadd_start;
+ 	kprintf("J3 RAM: loader end=%#llx add=[%#llx,%#llx) size=%llu MiB\n",
+ 	    (uint64_t)vm_last_phys, (uint64_t)hotadd_start,
+-	    (uint64_t)J3_BANK1_END, (uint64_t)(hotadd_size >> 20));
++	    (uint64_t)J3_WLBT_SHARED_START, (uint64_t)(hotadd_size >> 20));
+ 
+ 	/* vm_page_create() is XNU's supported late-discovered-RAM path. */
+ 	if (hotadd_size != 0) {
+ 		vm_page_create((ppnum_t)atop_64(hotadd_start),
+-		    (ppnum_t)atop_64(J3_BANK1_END));
++		    (ppnum_t)atop_64(J3_WLBT_SHARED_START));
+ 	}
+ 
+ 	mem_size += hotadd_size;
+@@ -216,8 +219,8 @@ j3y17lte_add_bank1(void)
+ 		max_mem_actual = max_mem;
+ 	}
+ 
+-	kprintf("J3 RAM: bank1 online total=%llu MiB target=2024 MiB added=%llu MiB\n",
+-	    (uint64_t)(max_mem >> 20), (uint64_t)(hotadd_size >> 20));
++	kprintf("J3 RAM: bank1 online total=%llu MiB target=2020 MiB added=%llu MiB; 4 MiB WLBT reserved\n",
++	    (uint64_t)(max_mem >> 20), (uint64_t)(hotadd_size >> 20));
+ }
+ #endif
+ 
+--- a/bsd/conf/files
++++ b/bsd/conf/files
+@@ -107,6 +107,7 @@ bsd/dev/memdev.c			standard
+ bsd/dev/sweet_ufs.c			standard
+ bsd/dev/j3y17lte_emmc.c			standard
+ bsd/dev/j3y17lte_input.c			standard
++bsd/dev/j3y17lte_wlbt.c			standard
+ bsd/dev/sweet_sample.c			standard
+ bsd/dev/sweet_keys.c			standard
+ bsd/dev/sweet_touch.c			standard
+--- a/iokit/bsddev/IOKitBSDInit.cpp
++++ b/iokit/bsddev/IOKitBSDInit.cpp
+@@ -70,6 +70,7 @@ extern boolean_t cpuid_vmm_present(void);
+ #if defined(ARM64_BOARD_CONFIG_J3Y17LTE)
+ extern void j3y17lte_emmc_probe(void);
+ extern void j3y17lte_input_init(void);
++extern void j3y17lte_wlbt_init(void);
+ #endif
+ 
+ #define ROUNDUP(a, b) (((a) + ((b) - 1)) & (~((b) - 1)))
+@@ -772,6 +773,7 @@ IOKitBSDInit(void)
+ 
+ #if defined(ARM64_BOARD_CONFIG_J3Y17LTE)
+ 	j3y17lte_input_init();
++	j3y17lte_wlbt_init();
+ 	{
+ 	uint32_t emmcprobe = 0;
+ 	PE_parse_boot_argn("emmcprobe", &emmcprobe, sizeof(emmcprobe));
+--- /dev/null
++++ b/bsd/dev/j3y17lte_wlbt.c
+@@ -0,0 +1,492 @@
++/*
++ * J3Y17LTE Samsung SCSC/MX140 WLBT bring-up.
++ *
++ * This is a clean-room XNU implementation using public hardware/protocol
++ * facts.  It contains no Samsung firmware or Apple proprietary code.
++ * Firmware is loaded at runtime from a private/local rootfs file.
++ */
++#if defined(ARM64_BOARD_CONFIG_J3Y17LTE)
++
++#include <sys/param.h>
++#include <sys/systm.h>
++#include <sys/fcntl.h>
++#include <sys/vnode.h>
++#include <sys/vnode_internal.h>
++#include <sys/mount_internal.h>
++#include <kern/clock.h>
++#include <kern/thread.h>
++#include <kern/sched_prim.h>
++#include <machine/machine_routines.h>
++#include <pexpert/pexpert.h>
++
++extern vm_offset_t ml_io_map(vm_offset_t, vm_size_t);
++extern vm_map_address_t j3y17lte_bank1_direct_base;
++
++#define J3_WLBT_MBOX_PA          0x10580000ULL
++#define J3_WLBT_PMU_PA           0x11c80000ULL
++#define J3_WLBT_CMU_FSYS_PA      0x13730000ULL
++#define J3_WLBT_SHARED_PA        0xbfc00000ULL
++#define J3_WLBT_SHARED_SIZE      0x00400000u
++#define J3_WLBT_BANK1_PA         0x80000000ULL
++
++#define J3_MBOX_INTGR0           0x008u
++#define J3_MBOX_INTCR0           0x00cu
++#define J3_MBOX_INTMR0           0x010u
++#define J3_MBOX_INTGR1           0x01cu
++#define J3_MBOX_INTCR1           0x020u
++#define J3_MBOX_INTMR1           0x024u
++#define J3_MBOX_INTGR2           0x030u
++#define J3_MBOX_INTCR2           0x034u
++#define J3_MBOX_INTMR2           0x038u
++#define J3_MBOX_ISSR(n)          (0x080u + ((n) * 4u))
++
++#define J3_PMU_WIFI_CTRL_NS      0x0140u
++#define J3_PMU_WIFI_CTRL_S       0x0144u
++#define J3_PMU_MEM_SIZE          0x0150u
++#define J3_PMU_MEM_BASE          0x0164u
++#define J3_PMU_BOOT_CFG          0x0168u
++#define J3_WIFI_PWRON            (1u << 1)
++#define J3_WIFI_RESET_SET        (1u << 2)
++#define J3_WIFI_ACTIVE_CLR       (1u << 6)
++#define J3_WIFI_START            (1u << 3)
++
++#define J3_CMU_USBPLL_CON1       0x1004u
++#define J3_USBPLL_AP_OWNER       (1u << 0)
++#define J3_USBPLL_FORCE_ON       (1u << 1)
++
++#define J3_MXCONF_MAGIC          0x79828486u
++#define J3_MBOX2_MAGIC           0xbcdeedcbu
++#define J3_FW_MAGIC_OFFSET       8u
++#define J3_FW_RUNTIME_OFFSET     36u
++#define J3_FW_ENTRY_OFFSET       40u
++#define J3_FW_MIN_HEADER         44u
++#define J3_MGMT_PACKET_SIZE      8u
++#define J3_MGMT_PACKET_COUNT     64u
++#define J3_GDB_PACKET_SIZE       4u
++#define J3_GDB_PACKET_COUNT      512u
++#define J3_LOG_PACKET_SIZE       4u
++#define J3_LOG_PACKET_COUNT      4096u
++#define J3_MM_START_IND          0u
++#define J3_MM_CHAN_MANAGER       0u
++
++#define J3_FW_PATH "/usr/share/firmware/j3/mx140.bin"
++
++struct j3_mxcbufconf {
++	uint32_t buffer_loc;
++	uint32_t num_packets;
++	uint32_t packet_size;
++	uint32_t read_index_loc;
++	uint32_t write_index_loc;
++} __attribute__((packed));
++
++struct j3_mxstreamconf {
++	struct j3_mxcbufconf buf;
++	uint8_t read_bit_idx;
++	uint8_t write_bit_idx;
++} __attribute__((packed));
++
++struct j3_mxtransconf {
++	struct j3_mxstreamconf to_ap;
++	struct j3_mxstreamconf from_ap;
++} __attribute__((packed));
++
++struct j3_mxconf {
++	uint32_t magic;
++	uint16_t major;
++	uint16_t minor;
++	struct j3_mxtransconf mgmt;
++	struct j3_mxtransconf gdb_r4;
++	struct j3_mxtransconf gdb_m4;
++	struct j3_mxstreamconf mxlog;
++} __attribute__((packed));
++
++struct j3_stream {
++	uint32_t buffer_loc;
++	uint32_t read_index_loc;
++	uint32_t write_index_loc;
++	uint32_t num_packets;
++	uint32_t packet_size;
++	uint8_t read_bit;
++	uint8_t write_bit;
++};
++
++struct j3_alloc {
++	uint8_t *base;
++	uint32_t cursor;
++	uint32_t limit;
++};
++
++static vm_offset_t j3_wlbt_mbox;
++static vm_offset_t j3_wlbt_pmu;
++static vm_offset_t j3_wlbt_cmu;
++static uint8_t *j3_wlbt_shared;
++static struct j3_stream j3_mgmt_in;
++static struct j3_stream j3_mgmt_out;
++static int j3_wlbt_started;
++static int j3_wlbt_sleep_chan;
++
++static inline uint32_t
++j3_read32(vm_offset_t base, uint32_t off)
++{
++	return *(volatile uint32_t *)(base + off);
++}
++
++static inline void
++j3_write32(vm_offset_t base, uint32_t off, uint32_t value)
++{
++	*(volatile uint32_t *)(base + off) = value;
++	__asm__ volatile("dsb sy" ::: "memory");
++}
++
++static inline void
++j3_rmw32(vm_offset_t base, uint32_t off, uint32_t clear, uint32_t set)
++{
++	uint32_t value = j3_read32(base, off);
++	value &= ~clear;
++	value |= set;
++	j3_write32(base, off, value);
++}
++
++static void
++j3_wlbt_sleep_ms(uint32_t ms)
++{
++	uint64_t deadline;
++	clock_interval_to_deadline(ms, NSEC_PER_MSEC, &deadline);
++	assert_wait_deadline((event_t)&j3_wlbt_sleep_chan,
++	    THREAD_UNINT, deadline);
++	thread_block(THREAD_CONTINUE_NULL);
++}
++
++static uint32_t
++j3_align4(uint32_t value)
++{
++	return (value + 3u) & ~3u;
++}
++
++static uint32_t
++j3_alloc_region(struct j3_alloc *a, uint32_t size, uint32_t align)
++{
++	uint32_t mask = align - 1u;
++	uint32_t off = (a->cursor + mask) & ~mask;
++	if (align == 0 || off > a->limit || size > a->limit - off) {
++		return UINT32_MAX;
++	}
++	a->cursor = off + size;
++	return off;
++}
++
++static bool
++j3_stream_make(struct j3_alloc *a, struct j3_stream *s,
++	struct j3_mxstreamconf *out, uint32_t packets, uint32_t packet_size,
++	uint8_t read_bit, uint8_t write_bit, bool incoming)
++{
++	uint32_t bytes = packets * packet_size;
++	uint32_t buf = j3_alloc_region(a, bytes, 4);
++	uint32_t ridx = j3_alloc_region(a, sizeof(uint32_t), 4);
++	uint32_t widx = j3_alloc_region(a, sizeof(uint32_t), 4);
++	if (buf == UINT32_MAX || ridx == UINT32_MAX || widx == UINT32_MAX) {
++		return false;
++	}
++	memset(a->base + buf, incoming ? 0xff : 0x00, bytes);
++	*(volatile uint32_t *)(a->base + ridx) = 0;
++	*(volatile uint32_t *)(a->base + widx) = 0;
++	out->buf.buffer_loc = buf;
++	out->buf.num_packets = packets;
++	out->buf.packet_size = packet_size;
++	out->buf.read_index_loc = ridx;
++	out->buf.write_index_loc = widx;
++	out->read_bit_idx = read_bit;
++	out->write_bit_idx = write_bit;
++	s->buffer_loc = buf;
++	s->read_index_loc = ridx;
++	s->write_index_loc = widx;
++	s->num_packets = packets;
++	s->packet_size = packet_size;
++	s->read_bit = read_bit;
++	s->write_bit = write_bit;
++	return true;
++}
++
++static int
++j3_read_firmware(void *dst, uint32_t capacity, uint32_t *size_out)
++{
++	vnode_t vp = NULLVP;
++	vfs_context_t ctx = vfs_context_kernel();
++	struct vnode_attr va;
++	int error;
++	int resid = 0;
++
++	error = vnode_open(J3_FW_PATH, FREAD | O_NOFOLLOW, 0, 0, &vp, ctx);
++	if (error != 0) {
++		return error;
++	}
++	VATTR_INIT(&va);
++	VATTR_WANTED(&va, va_data_size);
++	error = vnode_getattr(vp, &va, ctx);
++	if (error == 0 &&
++	    (va.va_data_size < J3_FW_MIN_HEADER ||
++	    va.va_data_size > (off_t)capacity ||
++	    va.va_data_size > INT32_MAX)) {
++		error = EFBIG;
++	}
++	if (error == 0) {
++		error = vn_rdwr(UIO_READ, vp, (caddr_t)dst,
++		    (int)va.va_data_size, 0, UIO_SYSSPACE, IO_NOAUTH,
++		    vfs_context_ucred(ctx), &resid, vfs_context_proc(ctx));
++		if (error == 0 && resid != 0) {
++			error = EIO;
++		}
++	}
++	if (error == 0) {
++		*size_out = (uint32_t)va.va_data_size;
++	}
++	(void)vnode_close(vp, FREAD, ctx);
++	return error;
++}
++
++static bool
++j3_mx_config_build(uint32_t fw_runtime, uint32_t *mxconf_off)
++{
++	struct j3_alloc a = {
++		.base = j3_wlbt_shared,
++		.cursor = j3_align4(fw_runtime),
++		.limit = J3_WLBT_SHARED_SIZE
++	};
++	uint32_t conf_off = j3_alloc_region(&a, sizeof(struct j3_mxconf), 4);
++	if (conf_off == UINT32_MAX) {
++		return false;
++	}
++	struct j3_mxconf *conf =
++	    (struct j3_mxconf *)(j3_wlbt_shared + conf_off);
++	memset(conf, 0, sizeof(*conf));
++	conf->magic = J3_MXCONF_MAGIC;
++	conf->major = 0;
++	conf->minor = 1;
++
++	/*
++	 * Deterministic interrupt-bit allocation mirrors the public protocol:
++	 * from-host bit 0 is reserved for panic on each coprocessor; to-host
++	 * bits are allocated from zero.  Firmware-to-AP IRQs remain masked and
++	 * this bring-up polls the shared indices.
++	 */
++	if (!j3_stream_make(&a, &j3_mgmt_in, &conf->mgmt.to_ap,
++	    J3_MGMT_PACKET_COUNT, J3_MGMT_PACKET_SIZE, 1, 0, true) ||
++	    !j3_stream_make(&a, &j3_mgmt_out, &conf->mgmt.from_ap,
++	    J3_MGMT_PACKET_COUNT, J3_MGMT_PACKET_SIZE, 1, 2, false)) {
++		return false;
++	}
++
++	struct j3_stream scratch;
++	if (!j3_stream_make(&a, &scratch, &conf->gdb_r4.to_ap,
++	    J3_GDB_PACKET_COUNT, J3_GDB_PACKET_SIZE, 3, 2, true) ||
++	    !j3_stream_make(&a, &scratch, &conf->gdb_r4.from_ap,
++	    J3_GDB_PACKET_COUNT, J3_GDB_PACKET_SIZE, 3, 0, false) ||
++	    !j3_stream_make(&a, &scratch, &conf->gdb_m4.to_ap,
++	    J3_GDB_PACKET_COUNT, J3_GDB_PACKET_SIZE, 1, 4, true) ||
++	    !j3_stream_make(&a, &scratch, &conf->gdb_m4.from_ap,
++	    J3_GDB_PACKET_COUNT, J3_GDB_PACKET_SIZE, 5, 0, false) ||
++	    !j3_stream_make(&a, &scratch, &conf->mxlog,
++	    J3_LOG_PACKET_COUNT, J3_LOG_PACKET_SIZE, 4, 6, true)) {
++		return false;
++	}
++	__asm__ volatile("dsb sy" ::: "memory");
++	*mxconf_off = conf_off;
++	printf("J3 WLBT: mxconf=%#x heap_end=%#x\n", conf_off, a.cursor);
++	return true;
++}
++
++static void
++j3_mailbox_defaults(void)
++{
++	for (unsigned int i = 0; i < 8; i++) {
++		j3_write32(j3_wlbt_mbox, J3_MBOX_ISSR(i), 0);
++	}
++	j3_write32(j3_wlbt_mbox, J3_MBOX_INTMR0, 0xffff0000u);
++	j3_write32(j3_wlbt_mbox, J3_MBOX_INTMR1, 0x0000ffffu);
++	j3_write32(j3_wlbt_mbox, J3_MBOX_INTMR2, 0x0000ffffu);
++	j3_write32(j3_wlbt_mbox, J3_MBOX_INTCR0, 0xffff0000u);
++	j3_write32(j3_wlbt_mbox, J3_MBOX_INTCR1, 0x0000ffffu);
++	j3_write32(j3_wlbt_mbox, J3_MBOX_INTCR2, 0x0000ffffu);
++}
++
++static void
++j3_wlbt_power_off(void)
++{
++	if (j3_wlbt_pmu) {
++		j3_rmw32(j3_wlbt_pmu, J3_PMU_WIFI_CTRL_NS,
++		    J3_WIFI_PWRON, J3_WIFI_RESET_SET);
++	}
++	if (j3_wlbt_cmu) {
++		j3_rmw32(j3_wlbt_cmu, J3_CMU_USBPLL_CON1, 0,
++		    J3_USBPLL_FORCE_ON);
++		j3_wlbt_sleep_ms(1);
++		j3_rmw32(j3_wlbt_cmu, J3_CMU_USBPLL_CON1, 0,
++		    J3_USBPLL_AP_OWNER);
++	}
++}
++
++static bool
++j3_wlbt_power_on(uint32_t fw_entry, uint32_t mxconf_off)
++{
++	/* Hand the USB PLL to WLBT. */
++	j3_rmw32(j3_wlbt_cmu, J3_CMU_USBPLL_CON1,
++	    J3_USBPLL_AP_OWNER, 0);
++
++	j3_mailbox_defaults();
++	j3_write32(j3_wlbt_pmu, J3_PMU_BOOT_CFG, 0);
++	j3_write32(j3_wlbt_pmu, J3_PMU_MEM_BASE,
++	    (uint32_t)(J3_WLBT_SHARED_PA >> 12));
++	j3_write32(j3_wlbt_pmu, J3_PMU_MEM_SIZE,
++	    J3_WLBT_SHARED_SIZE >> 12);
++
++	j3_write32(j3_wlbt_mbox, J3_MBOX_ISSR(0), fw_entry);
++	j3_write32(j3_wlbt_mbox, J3_MBOX_ISSR(1), mxconf_off);
++	j3_write32(j3_wlbt_mbox, J3_MBOX_ISSR(2), J3_MBOX2_MAGIC);
++	j3_write32(j3_wlbt_mbox, J3_MBOX_ISSR(3), 0);
++
++	j3_rmw32(j3_wlbt_pmu, J3_PMU_WIFI_CTRL_NS,
++	    0, J3_WIFI_ACTIVE_CLR);
++	j3_rmw32(j3_wlbt_pmu, J3_PMU_WIFI_CTRL_NS,
++	    0, J3_WIFI_PWRON);
++	j3_rmw32(j3_wlbt_pmu, J3_PMU_WIFI_CTRL_NS,
++	    J3_WIFI_RESET_SET, 0);
++	j3_rmw32(j3_wlbt_pmu, J3_PMU_WIFI_CTRL_S,
++	    0, J3_WIFI_START);
++	return true;
++}
++
++static void
++j3_kick_r4(uint8_t bit)
++{
++	if (bit < 16) {
++		j3_write32(j3_wlbt_mbox, J3_MBOX_INTGR1, 1u << bit);
++	}
++}
++
++static bool
++j3_stream_pop(struct j3_stream *s, uint8_t packet[8])
++{
++	volatile uint32_t *ridxp =
++	    (volatile uint32_t *)(j3_wlbt_shared + s->read_index_loc);
++	volatile uint32_t *widxp =
++	    (volatile uint32_t *)(j3_wlbt_shared + s->write_index_loc);
++	uint32_t ridx = *ridxp;
++	uint32_t widx = *widxp;
++	__asm__ volatile("dmb ish" ::: "memory");
++	if (ridx == widx) {
++		return false;
++	}
++	if (ridx >= s->num_packets || widx >= s->num_packets ||
++	    s->packet_size != sizeof(uint64_t)) {
++		return false;
++	}
++	memcpy(packet, j3_wlbt_shared + s->buffer_loc +
++	    ridx * s->packet_size, 8);
++	*ridxp = (ridx + 1u) % s->num_packets;
++	__asm__ volatile("dsb sy" ::: "memory");
++	j3_kick_r4(s->read_bit);
++	return true;
++}
++
++static bool
++j3_wait_start_ind(void)
++{
++	for (unsigned int tick = 0; tick < 500; tick++) {
++		uint8_t msg[8];
++		while (j3_stream_pop(&j3_mgmt_in, msg)) {
++			if (msg[0] == J3_MM_CHAN_MANAGER &&
++			    msg[1] == J3_MM_START_IND) {
++				uint32_t rf_hw =
++				    ((uint32_t)msg[2]) |
++				    ((uint32_t)msg[3] << 8) |
++				    ((uint32_t)msg[4] << 16) |
++				    ((uint32_t)msg[5] << 24);
++				printf("J3 WLBT: MM_START_IND rf_hw=%#x\n", rf_hw);
++				return true;
++			}
++			printf("J3 WLBT: mgmt ch=%u msg=%u\n", msg[0], msg[1]);
++		}
++		j3_wlbt_sleep_ms(10);
++	}
++	return false;
++}
++
++static bool
++j3_wlbt_map(void)
++{
++	j3_wlbt_mbox = ml_io_map(J3_WLBT_MBOX_PA, 0x1000);
++	j3_wlbt_pmu = ml_io_map(J3_WLBT_PMU_PA, 0x2000);
++	j3_wlbt_cmu = ml_io_map(J3_WLBT_CMU_FSYS_PA, 0x2000);
++	if (!j3_wlbt_mbox || !j3_wlbt_pmu || !j3_wlbt_cmu ||
++	    j3y17lte_bank1_direct_base == 0) {
++		return false;
++	}
++	j3_wlbt_shared = (uint8_t *)(j3y17lte_bank1_direct_base +
++	    (J3_WLBT_SHARED_PA - J3_WLBT_BANK1_PA));
++	return j3_wlbt_shared != NULL;
++}
++
++static void
++j3_wlbt_thread(void *arg, wait_result_t result)
++{
++	(void)arg;
++	(void)result;
++	uint32_t fw_size = 0;
++	uint32_t fw_runtime;
++	uint32_t fw_entry;
++	uint32_t mxconf_off;
++	int error = ENOENT;
++
++	/* Do not hold up BSD/IOKit startup while the root filesystem settles. */
++	j3_wlbt_sleep_ms(3000);
++	if (!j3_wlbt_map()) {
++		printf("J3 WLBT: map failed; Wi-Fi disabled\n");
++		return;
++	}
++
++	for (unsigned int attempt = 0; attempt < 20; attempt++) {
++		error = j3_read_firmware(j3_wlbt_shared,
++		    J3_WLBT_SHARED_SIZE, &fw_size);
++		if (error == 0) {
++			break;
++		}
++		if ((attempt % 4u) == 0) {
++			printf("J3 WLBT: firmware not ready err=%d attempt=%u\n",
++			    error, attempt + 1u);
++		}
++		j3_wlbt_sleep_ms(500);
++	}
++	if (error != 0) {
++		printf("J3 WLBT: no private firmware at %s; leaving radio off\n",
++		    J3_FW_PATH);
++		return;
++	}
++	if (fw_size < J3_FW_MIN_HEADER ||
++	    memcmp(j3_wlbt_shared + J3_FW_MAGIC_OFFSET, "smxf", 4) != 0) {
++		printf("J3 WLBT: invalid MX140 header size=%u\n", fw_size);
++		return;
++	}
++	memcpy(&fw_runtime, j3_wlbt_shared + J3_FW_RUNTIME_OFFSET,
++	    sizeof(fw_runtime));
++	memcpy(&fw_entry, j3_wlbt_shared + J3_FW_ENTRY_OFFSET,
++	    sizeof(fw_entry));
++	if (fw_runtime < fw_size || fw_runtime >= J3_WLBT_SHARED_SIZE ||
++	    J3_WLBT_SHARED_SIZE - j3_align4(fw_runtime) < 0x10000u) {
++		printf("J3 WLBT: bad runtime=%#x image=%#x\n",
++		    fw_runtime, fw_size);
++		return;
++	}
++	printf("J3 WLBT: firmware loaded image=%u runtime=%#x entry=%#x shared=%#llx\n",
++	    fw_size, fw_runtime, fw_entry,
++	    (unsigned long long)J3_WLBT_SHARED_PA);
++
++	if (!j3_mx_config_build(fw_runtime, &mxconf_off)) {
++		printf("J3 WLBT: transport configuration allocation failed\n");
++		return;
++	}
++	(void)j3_wlbt_power_on(fw_entry, mxconf_off);
++	if (!j3_wait_start_ind()) {
++		printf("J3 WLBT: firmware start timeout; powering radio down\n");
++		j3_wlbt_power_off();
++		return;
++	}
++	j3_wlbt_started = 1;
++	printf("J3 WLBT: firmware infrastructure online\n");
++}
++
++void
++j3y17lte_wlbt_init(void)
++{
++	int enabled = 1;
++	thread_t thread;
++	(void)PE_parse_boot_argn("j3wifi", &enabled, sizeof(enabled));
++	if (!enabled) {
++		printf("J3 WLBT: disabled by j3wifi=0\n");
++		return;
++	}
++	if (j3_wlbt_started) {
++		return;
++	}
++	kern_return_t kr = kernel_thread_start(j3_wlbt_thread, NULL, &thread);
++	if (kr != KERN_SUCCESS) {
++		printf("J3 WLBT: thread start failed %d\n", kr);
++		return;
++	}
++	thread_deallocate(thread);
++	printf("J3 WLBT: deferred MX140 bring-up scheduled\n");
++}
++
++#endif /* ARM64_BOARD_CONFIG_J3Y17LTE */
