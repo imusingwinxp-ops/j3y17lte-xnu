@@ -120,16 +120,16 @@
  	if (error != 0) {
  		return error;
  	}
-+@@ -235,7 +308,7 @@ j3_read_private_file(const char *path, void *dst, uint32_t capacity, uint32_t *size_out)
-+	VATTR_INIT(&va);
-+	VATTR_WANTED(&va, va_data_size);
-+	error = vnode_getattr(vp, &va, ctx);
-+	if (error == 0 &&
-+-	    (va.va_data_size < J3_FW_MIN_HEADER ||
-++	    (va.va_data_size <= 0 ||
-+	    va.va_data_size > (off_t)capacity ||
-+	    va.va_data_size > INT32_MAX)) {
-+		error = EFBIG;
+@@ -235,7 +308,7 @@ j3_read_private_file(const char *path, void *dst, uint32_t capacity, uint32_t *size_out)
+ 	VATTR_INIT(&va);
+ 	VATTR_WANTED(&va, va_data_size);
+ 	error = vnode_getattr(vp, &va, ctx);
+ 	if (error == 0 &&
+-	    (va.va_data_size < J3_FW_MIN_HEADER ||
++	    (va.va_data_size <= 0 ||
+ 	    va.va_data_size > (off_t)capacity ||
+ 	    va.va_data_size > INT32_MAX)) {
+ 		error = EFBIG;
 @@ -304,6 +377,7 @@ j3_mx_config_build(uint32_t fw_runtime, uint32_t *mxconf_off)
  	}
  	__asm__ volatile("dsb sy" ::: "memory");
