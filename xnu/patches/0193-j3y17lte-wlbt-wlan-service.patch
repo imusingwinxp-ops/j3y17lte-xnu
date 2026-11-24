@@ -1,0 +1,333 @@
+--- a/bsd/dev/j3y17lte_wlbt.c
++++ b/bsd/dev/j3y17lte_wlbt.c
+@@ -75,7 +75,28 @@
+ #define J3_MM_START_IND          0u
+ #define J3_MM_CHAN_MANAGER       0u
+ 
+ #define J3_FW_PATH "/usr/share/firmware/j3/mx140.bin"
++#define J3_WLAN_HCF_PATH "/usr/share/firmware/j3/wlan.hcf"
++#define J3_WLAN_SW_HCF_PATH "/usr/share/firmware/j3/wlan_sw.hcf"
++
++#define J3_SM_CHAN               1u
++#define J3_SERVICE_WLAN          1u
++#define J3_SM_START_REQ          0u
++#define J3_SM_START_CFM          1u
++
++#define J3_WLAN_SIZE             0x00100000u
++#define J3_WLAN_CONFIG_OFF       0x00000u
++#define J3_WLAN_CONFIG_SIZE      0x02000u
++#define J3_WLAN_MIB_OFF          0x02000u
++#define J3_WLAN_MIB_SIZE         0x01000u
++#define J3_WLAN_TX_OFF           0x03000u
++#define J3_WLAN_TX_SIZE          0x7d000u
++#define J3_WLAN_RX_OFF           0x80000u
++#define J3_WLAN_RX_SIZE          0x80000u
++#define J3_HIP_INIT_MAGIC        0xcaaa0400u
++#define J3_HIP_CONFIG_MAGIC      0xcaba0401u
++#define J3_HIP_FROMHOST_BIT      5u
++#define J3_HIP_TOHOST_BIT        7u
+ 
+ struct j3_mxcbufconf {
+ 	uint32_t buffer_loc;
+@@ -107,6 +128,56 @@ struct j3_mxconf {
+ 	struct j3_mxstreamconf mxlog;
+ } __attribute__((packed));
+ 
++struct j3_hip_config {
++	uint32_t magic_number;
++	uint16_t hip_config_ver;
++	uint16_t config_len;
++	uint32_t compat_flag;
++	uint16_t sap_mlme_ver;
++	uint16_t sap_ma_ver;
++	uint16_t sap_debug_ver;
++	uint16_t sap_test_ver;
++	uint32_t fw_build_id;
++	uint32_t fw_patch_id;
++	uint8_t unidat_req_headroom;
++	uint8_t unidat_req_tailroom;
++	uint8_t bulk_buffer_align;
++	uint8_t host_cache_line;
++	uint32_t host_buf_loc;
++	uint32_t host_buf_sz;
++	uint32_t fw_buf_loc;
++	uint32_t fw_buf_sz;
++	uint32_t mib_loc;
++	uint32_t mib_sz;
++	uint32_t log_config_loc;
++	uint32_t log_config_sz;
++	uint8_t mif_fh_int_n;
++	uint8_t mif_th_int_n;
++	uint8_t reserved[2];
++	uint32_t scbrd_loc;
++	uint16_t q_num;
++	uint16_t q_len;
++	uint16_t q_idx_sz;
++	uint8_t reserved2[2];
++	uint32_t q_loc[6];
++	uint8_t reserved3[16];
++} __attribute__((packed));
++
++struct j3_hip_q {
++	uint32_t array[256];
++	uint8_t idx_read;
++	uint8_t idx_write;
++	uint8_t total;
++	uint8_t pad[61];
++} __attribute__((packed));
++
++struct j3_hip_control {
++	uint32_t init_magic;
++	volatile uint32_t conf_hip4_ver;
++	uint32_t version_a_ref;
++	uint32_t version_b_ref;
++	uint8_t pad0[16];
++	struct j3_hip_config config_v3;
++	uint8_t pad1[8];
++	struct j3_hip_config config_v4;
++	uint8_t pad2[40];
++	uint32_t scoreboard[256];
++	struct j3_hip_q q[6];
++} __attribute__((packed));
++
+ struct j3_stream {
+ 	uint32_t buffer_loc;
+ 	uint32_t read_index_loc;
+@@ -130,6 +201,8 @@ static struct j3_stream j3_mgmt_in;
+ static struct j3_stream j3_mgmt_out;
+ static int j3_wlbt_started;
+ static int j3_wlbt_sleep_chan;
++static uint32_t j3_wlbt_heap_cursor;
++static uint32_t j3_wlan_ref;
+ 
+ static inline uint32_t
+ j3_read32(vm_offset_t base, uint32_t off)
+@@ -217,14 +290,14 @@ j3_stream_make(struct j3_alloc *a, struct j3_stream *s,
+ }
+ 
+ static int
+-j3_read_firmware(void *dst, uint32_t capacity, uint32_t *size_out)
++j3_read_private_file(const char *path, void *dst, uint32_t capacity, uint32_t *size_out)
+ {
+ 	vnode_t vp = NULLVP;
+ 	vfs_context_t ctx = vfs_context_kernel();
+ 	struct vnode_attr va;
+ 	int error;
+ 	int resid = 0;
+ 
+-	error = vnode_open(J3_FW_PATH, FREAD | O_NOFOLLOW, 0, 0, &vp, ctx);
++	error = vnode_open(path, FREAD | O_NOFOLLOW, 0, 0, &vp, ctx);
+ 	if (error != 0) {
+ 		return error;
+ 	}
+@@ -304,6 +377,7 @@ j3_mx_config_build(uint32_t fw_runtime, uint32_t *mxconf_off)
+ 	}
+ 	__asm__ volatile("dsb sy" ::: "memory");
+ 	*mxconf_off = conf_off;
++	j3_wlbt_heap_cursor = a.cursor;
+ 	printf("J3 WLBT: mxconf=%#x heap_end=%#x\n", conf_off, a.cursor);
+ 	return true;
+ }
+@@ -407,6 +481,174 @@ j3_stream_pop(struct j3_stream *s, uint8_t packet[8])
+ 	return true;
+ }
+ 
++static bool
++j3_stream_push(struct j3_stream *s, const uint8_t packet[8])
++{
++	volatile uint32_t *ridxp =
++	    (volatile uint32_t *)(j3_wlbt_shared + s->read_index_loc);
++	volatile uint32_t *widxp =
++	    (volatile uint32_t *)(j3_wlbt_shared + s->write_index_loc);
++	uint32_t ridx = *ridxp;
++	uint32_t widx = *widxp;
++	__asm__ volatile("dmb ish" ::: "memory");
++	if (ridx >= s->num_packets || widx >= s->num_packets ||
++	    s->packet_size != sizeof(uint64_t) ||
++	    ((widx + 1u) % s->num_packets) == ridx) {
++		return false;
++	}
++	memcpy(j3_wlbt_shared + s->buffer_loc + widx * s->packet_size,
++	    packet, 8);
++	*widxp = (widx + 1u) % s->num_packets;
++	__asm__ volatile("dsb sy" ::: "memory");
++	j3_kick_r4(s->write_bit);
++	return true;
++}
++
++static uint32_t
++j3_shared_alloc(uint32_t size, uint32_t align)
++{
++	uint32_t mask = align - 1u;
++	uint32_t off = (j3_wlbt_heap_cursor + mask) & ~mask;
++	if (align == 0 || off >= J3_WLBT_SHARED_SIZE ||
++	    size > J3_WLBT_SHARED_SIZE - off) {
++		return 0xffffffffu;
++	}
++	j3_wlbt_heap_cursor = off + size;
++	return off;
++}
++
++static void
++j3_hip_fill_config(struct j3_hip_config *cfg, uint16_t version,
++	uint32_t wlan_ref, uint32_t mib_len)
++{
++	memset(cfg, 0, sizeof(*cfg));
++	cfg->magic_number = J3_HIP_CONFIG_MAGIC;
++	cfg->hip_config_ver = version;
++	cfg->config_len = sizeof(*cfg);
++	cfg->host_cache_line = 64;
++	cfg->host_buf_loc = wlan_ref + J3_WLAN_TX_OFF;
++	cfg->host_buf_sz = J3_WLAN_TX_SIZE;
++	cfg->fw_buf_loc = wlan_ref + J3_WLAN_RX_OFF;
++	cfg->fw_buf_sz = J3_WLAN_RX_SIZE;
++	if (mib_len != 0) {
++		cfg->mib_loc = wlan_ref + J3_WLAN_MIB_OFF;
++		cfg->mib_sz = mib_len;
++	}
++	cfg->mif_fh_int_n = J3_HIP_FROMHOST_BIT;
++	cfg->mif_th_int_n = J3_HIP_TOHOST_BIT;
++	cfg->scbrd_loc = wlan_ref + 320u;
++	cfg->q_num = 6;
++	cfg->q_len = 256;
++	cfg->q_idx_sz = 1;
++	for (unsigned int i = 0; i < 6; i++) {
++		cfg->q_loc[i] = wlan_ref + 1344u + i * 1088u;
++	}
++}
++
++static bool
++j3_wlan_prepare(uint32_t *wlan_ref_out)
++{
++	uint32_t wlan_ref = j3_shared_alloc(J3_WLAN_SIZE, 4096);
++	if (wlan_ref == 0xffffffffu) {
++		printf("J3 WLAN: no 1 MiB shared block available\n");
++		return false;
++	}
++	uint8_t *wlan = j3_wlbt_shared + wlan_ref;
++	memset(wlan, 0, J3_WLAN_SIZE);
++
++	uint32_t mib1 = 0;
++	uint32_t mib2 = 0;
++	int error = j3_read_private_file(J3_WLAN_HCF_PATH,
++	    wlan + J3_WLAN_MIB_OFF, J3_WLAN_MIB_SIZE, &mib1);
++	if (error != 0 || mib1 == 0) {
++		printf("J3 WLAN: mandatory private wlan.hcf missing/invalid err=%d\n",
++		    error);
++		return false;
++	}
++	if (mib1 < J3_WLAN_MIB_SIZE) {
++		error = j3_read_private_file(J3_WLAN_SW_HCF_PATH,
++		    wlan + J3_WLAN_MIB_OFF + mib1,
++		    J3_WLAN_MIB_SIZE - mib1, &mib2);
++		if (error != 0) {
++			mib2 = 0;
++		}
++	}
++	uint32_t mib_total = mib1 + mib2;
++	struct j3_hip_control *hip =
++	    (struct j3_hip_control *)(wlan + J3_WLAN_CONFIG_OFF);
++	memset(hip, 0, J3_WLAN_CONFIG_SIZE);
++	j3_hip_fill_config(&hip->config_v3, 3, wlan_ref, mib_total);
++	j3_hip_fill_config(&hip->config_v4, 4, wlan_ref, mib_total);
++	hip->init_magic = J3_HIP_INIT_MAGIC;
++	hip->version_a_ref = wlan_ref + 160u;
++	hip->version_b_ref = wlan_ref + 32u;
++	__asm__ volatile("dsb sy" ::: "memory");
++
++	printf("J3 WLAN: HIP prepared ref=%#x mib=%u+%u fh=%u th=%u\n",
++	    wlan_ref, mib1, mib2, J3_HIP_FROMHOST_BIT, J3_HIP_TOHOST_BIT);
++	*wlan_ref_out = wlan_ref;
++	return true;
++}
++
++static bool
++j3_wlan_send_start(uint32_t wlan_ref)
++{
++	uint8_t packet[8] = {0};
++	packet[0] = J3_SM_CHAN;
++	packet[1] = J3_SERVICE_WLAN;
++	packet[2] = J3_SM_START_REQ;
++	packet[3] = (uint8_t)(wlan_ref);
++	packet[4] = (uint8_t)(wlan_ref >> 8);
++	packet[5] = (uint8_t)(wlan_ref >> 16);
++	packet[6] = (uint8_t)(wlan_ref >> 24);
++	return j3_stream_push(&j3_mgmt_out, packet);
++}
++
++static bool
++j3_wlan_wait_start_cfm(uint32_t wlan_ref)
++{
++	struct j3_hip_control *hip =
++	    (struct j3_hip_control *)(j3_wlbt_shared + wlan_ref);
++	for (unsigned int tick = 0; tick < 500; tick++) {
++		uint8_t msg[8];
++		while (j3_stream_pop(&j3_mgmt_in, msg)) {
++			if (msg[0] == J3_SM_CHAN &&
++			    msg[1] == J3_SERVICE_WLAN &&
++			    msg[2] == J3_SM_START_CFM) {
++				for (unsigned int ver_tick = 0; ver_tick < 200; ver_tick++) {
++					uint32_t ver = hip->conf_hip4_ver;
++					__asm__ volatile("dmb ish" ::: "memory");
++					if (ver == 3 || ver == 4) {
++						printf("J3 WLAN: START_CFM HIP%u selected\n", ver);
++						return true;
++					}
++					j3_wlbt_sleep_ms(10);
++				}
++				printf("J3 WLAN: START_CFM but no supported HIP version\n");
++				return false;
++			}
++			printf("J3 WLAN: mgmt ch=%u service=%u msg=%u\n",
++			    msg[0], msg[1], msg[2]);
++		}
++		j3_wlbt_sleep_ms(10);
++	}
++	return false;
++}
++
++static bool
++j3_wlan_service_start(void)
++{
++	uint32_t wlan_ref;
++	if (!j3_wlan_prepare(&wlan_ref)) {
++		return false;
++	}
++	if (!j3_wlan_send_start(wlan_ref)) {
++		printf("J3 WLAN: management TX ring full\n");
++		return false;
++	}
++	printf("J3 WLAN: START_REQ sent ref=%#x\n", wlan_ref);
++	if (!j3_wlan_wait_start_cfm(wlan_ref)) {
++		printf("J3 WLAN: START_CFM timeout/failure\n");
++		return false;
++	}
++	j3_wlan_ref = wlan_ref;
++	return true;
++}
++
+ static bool
+ j3_wait_start_ind(void)
+ {
+@@ -488,7 +730,7 @@ j3_wlbt_thread(void *arg, wait_result_t result)
+ 	}
+ 
+ 	for (unsigned int attempt = 0; attempt < 20; attempt++) {
+-		error = j3_read_firmware(j3_wlbt_shared,
++		error = j3_read_private_file(J3_FW_PATH, j3_wlbt_shared,
+ 		    J3_WLBT_SHARED_SIZE, &fw_size);
+ 		if (error == 0) {
+ 			break;
+@@ -539,8 +781,15 @@ j3_wlbt_thread(void *arg, wait_result_t result)
+ 		j3_wlbt_thread_exit();
+ 	}
+ 	j3_wlbt_started = 1;
+-	printf("J3 WLBT: firmware infrastructure online\n");
++	printf("J3 WLBT: firmware infrastructure online; starting WLAN service\n");
++	if (j3_wlan_service_start()) {
++		printf("J3 WLAN: firmware service online; Apple control shim still required\n");
++	} else {
++		printf("J3 WLAN: service not online; infrastructure left running for diagnostics\n");
++	}
+ 	j3_wlbt_thread_exit();
+ }
