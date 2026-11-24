@@ -29,7 +29,7 @@
  
  struct j3_mxcbufconf {
  	uint32_t buffer_loc;
-@@ -107,6 +128,56 @@ struct j3_mxconf {
+@@ -107,6 +128,63 @@ struct j3_mxconf {
  	struct j3_mxstreamconf mxlog;
  } __attribute__((packed));
  
@@ -102,7 +102,7 @@
  
  static inline uint32_t
  j3_read32(vm_offset_t base, uint32_t off)
-@@ -217,14 +290,14 @@ j3_stream_make(struct j3_alloc *a, struct j3_stream *s,
+@@ -217,15 +290,15 @@ j3_stream_make(struct j3_alloc *a, struct j3_stream *s,
  }
  
  static int
@@ -120,7 +120,7 @@
  	if (error != 0) {
  		return error;
  	}
-@@ -235,7 +308,7 @@ j3_read_private_file(const char *path, void *dst, uint32_t capacity, uint32_t *size_out)
+@@ -235,8 +308,8 @@ j3_read_private_file(const char *path, void *dst, uint32_t capacity, uint32_t *size_out)
  	VATTR_INIT(&va);
  	VATTR_WANTED(&va, va_data_size);
  	error = vnode_getattr(vp, &va, ctx);
@@ -138,7 +138,7 @@
  	printf("J3 WLBT: mxconf=%#x heap_end=%#x\n", conf_off, a.cursor);
  	return true;
  }
-@@ -407,6 +481,174 @@ j3_stream_pop(struct j3_stream *s, uint8_t packet[8])
+@@ -407,6 +481,180 @@ j3_stream_pop(struct j3_stream *s, uint8_t packet[8])
  	return true;
  }
  
@@ -328,7 +328,7 @@
  		    J3_WLBT_SHARED_SIZE, &fw_size);
  		if (error == 0) {
  			break;
-@@ -539,8 +781,15 @@ j3_wlbt_thread(void *arg, wait_result_t result)
+@@ -539,6 +781,11 @@ j3_wlbt_thread(void *arg, wait_result_t result)
  		j3_wlbt_thread_exit();
  	}
  	j3_wlbt_started = 1;
