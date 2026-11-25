@@ -17,7 +17,10 @@ Stability status for latest build: STABLE!
 Images:
 <img width="1152" height="2048" alt="WhatsApp Image 2026-11-08 at 23 14 04" src="https://github.com/user-attachments/assets/fc421f44-5c9b-46e1-aa58-5c93b1134367" />
 <img width="1536" height="2048" alt="WhatsApp Image 2026-11-08 at 23 19 20" src="https://github.com/user-attachments/assets/5f834346-4dec-44be-893d-60c09686ed2c" />
-<img width="1152" height="2048" alt="WhatsApp Image 2026-11-09 at 00 30 29" src="https://github.com/user-attachments/assets/52715d6a-db58-469b-9fb4-8acb526d2772" />
+<img width="1512" height="2016" alt="image" src="https://github.com/user-attachments/assets/0e05d7be-e117-4e43-85b9-32e7d6754c4b" />
+<img width="1200" height="1600" alt="image" src="https://github.com/user-attachments/assets/e36bd939-1f00-477f-858d-56cd2d498c9d" />
+
+
 
 
 
