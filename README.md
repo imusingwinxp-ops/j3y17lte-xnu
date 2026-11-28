@@ -28,7 +28,7 @@ Images:
 
 This repository contains independent configuration files (`.yml`) and source code modifications (`.patch`) created solely for educational research and evaluation of the open-source XNU kernel on diverse hardware architectures.
 
-* **Trademarks:** "Apple," "iOS," "XNU," "Darwin," and "iPhone" are registered trademarks of Apple Inc., registered in the U.S. and other countries. This project is entirely unaffiliated with, endorsed by, or sponsored by Apple Inc.
+* **Trademarks:** "Apple," "iOS," "XNU," "Darwin," and "iPhone" are registered trademarks of Apple Inc., registered in the U.S. and other countries. This project is entirely unaffiliated with, endorsed by, or sponsored by Apple Inc. "Samsung," and "Galaxy" are registered trademarks of Samsung Electronics Co., Ltd., registered in the Republic of Korea and other countries. This project is entirely unaffiliated with, endorsed by, or sponsored by Samsung Electronics Co., Ltd.
 * **Copyright & Licensing:** Any original Apple source code referenced by these patches remains the sole copyright of Apple Inc. and is subject to its respective original licenses (including the Apple Public Source License). The modifications contained in this repository are distributed "as-is" without warranty of any kind.
-* **No Proprietary Assets:** This repository does not host, distribute, or leak any copyrighted Apple binaries, proprietary firmware, encryption keys, or assets extracted from retail iOS software images (IPSWs). 
+* **No Proprietary Assets:** This repository does not host, distribute, or leak any copyrighted Apple or Samsung binaries, proprietary firmware, encryption keys, or assets extracted from retail iOS software images (IPSWs). 
 
